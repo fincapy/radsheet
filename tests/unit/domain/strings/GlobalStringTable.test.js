@@ -28,20 +28,12 @@ describe('GlobalStringTable', () => {
 		expect(table.getStringById(1)).toBe('world');
 	});
 
-	it('tracks unpersisted changes', () => {
-		expect(table.hasUnpersistedChanges).toBe(false);
-		table.getIdForString('new string');
-		expect(table.hasUnpersistedChanges).toBe(true);
-	});
-
 	it('loads from a list and resets state', () => {
 		const list = ['a', 'b', 'c'];
 		table.loadFromList(list);
 		expect(table.stringById).toEqual(list);
 		expect(table.idByString.get('b')).toBe(1);
-		expect(table.hasUnpersistedChanges).toBe(false);
 		expect(table.getIdForString('d')).toBe(3);
-		expect(table.hasUnpersistedChanges).toBe(true);
 	});
 });
 
@@ -58,15 +50,13 @@ describe('GlobalStringTable Edge Cases', () => {
 		table.loadFromList([]);
 		expect(table.stringById).toEqual([]);
 		expect(table.idByString.size).toBe(0);
-		expect(table.hasUnpersistedChanges).toBe(false);
 	});
 
 	it('handles duplicate strings in loadFromList', () => {
 		const table = new GlobalStringTable();
 		table.loadFromList(['a', 'b', 'a', 'c']);
 		expect(table.stringById).toEqual(['a', 'b', 'a', 'c']);
-		// The implementation maps each string to its last occurrence index
-		expect(table.idByString.get('a')).toBe(2); // Last occurrence overwrites first
+		expect(table.idByString.get('a')).toBe(2);
 		expect(table.idByString.get('b')).toBe(1);
 		expect(table.idByString.get('c')).toBe(3);
 	});

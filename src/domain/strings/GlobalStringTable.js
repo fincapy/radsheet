@@ -24,13 +24,6 @@ export class GlobalStringTable {
 		 * @private
 		 */
 		this.stringById = [];
-
-		/**
-		 * A flag indicating whether there have been changes to the string table
-		 * that have not yet been persisted to storage.
-		 * @type {boolean}
-		 */
-		this.hasUnpersistedChanges = false;
 	}
 
 	/**
@@ -45,7 +38,6 @@ export class GlobalStringTable {
 		const newId = this.stringById.length;
 		this.stringById.push(text);
 		this.idByString.set(text, newId);
-		this.hasUnpersistedChanges = true;
 		return newId;
 	}
 
@@ -66,6 +58,5 @@ export class GlobalStringTable {
 	loadFromList(list) {
 		this.stringById = Array.from(list);
 		this.idByString = new Map(this.stringById.map((s, i) => [s, i]));
-		this.hasUnpersistedChanges = false;
 	}
 }

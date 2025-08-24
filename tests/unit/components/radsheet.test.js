@@ -1,67 +1,22 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, fireEvent, screen } from '@testing-library/svelte/svelte5';
-import Sheet from '../../../src/components/sheet.svelte';
-import { Sheet as SheetDomain } from '../../../src/domain/sheet.js';
+import { render, fireEvent } from '@testing-library/svelte/svelte5';
+import Radsheet from '../../../src/components/Radsheet.svelte';
+import { Sheet } from '../../../src/domain/sheet/sheet.js';
 
-// Mock the worker client
-vi.mock('../../../src/lib/worker/persistence-worker-client.js', () => ({
-	createChunkPersistenceWorker: vi.fn(() => ({
-		persistChunk: vi.fn(),
-		persistStringTable: vi.fn()
-	}))
-}));
-
-// Mock IndexedDB
-const mockIndexedDB = {
-	open: vi.fn(() => ({
-		onupgradeneeded: null,
-		onsuccess: null,
-		onerror: null,
-		result: {
-			createObjectStore: vi.fn(),
-			objectStoreNames: {
-				contains: vi.fn(() => false)
-			},
-			transaction: vi.fn(() => ({
-				objectStore: vi.fn(() => ({
-					get: vi.fn(() => ({ onsuccess: null, onerror: null })),
-					put: vi.fn(() => ({ onsuccess: null, onerror: null })),
-					delete: vi.fn(() => ({ onsuccess: null, onerror: null }))
-				})),
-				oncomplete: null,
-				onerror: null
-			}))
-		}
-	}))
-};
-
-// Mock window properties
-Object.defineProperty(window, 'indexedDB', {
-	value: mockIndexedDB,
-	writable: true
-});
-
-Object.defineProperty(window, 'requestIdleCallback', {
-	value: vi.fn((callback) => setTimeout(callback, 0)),
-	writable: true
-});
-
-describe('Sheet Component', () => {
+describe('Radsheet Component', () => {
 	let component;
 
 	beforeEach(() => {
 		// Reset mocks
 		vi.clearAllMocks();
 
-		// Mock the sheet domain
-		const mockSheet = new SheetDomain();
+		// Mock the Radsheet domain
+		const mockSheet = new Sheet();
 		vi.spyOn(mockSheet, 'setValue').mockImplementation(() => {});
 		vi.spyOn(mockSheet, 'getValue').mockImplementation(() => '');
-		vi.spyOn(mockSheet, 'flush').mockResolvedValue();
-		vi.spyOn(mockSheet, 'loadRange').mockResolvedValue();
 
 		// Render component
-		component = render(Sheet);
+		component = render(Radsheet);
 	});
 
 	describe('Initialization', () => {
@@ -245,41 +200,6 @@ describe('Sheet Component', () => {
 			// For now, just check the button exists
 			const buttons = component.container.querySelectorAll('button');
 			expect(buttons.length).toBeGreaterThan(0);
-		});
-	});
-
-	describe('Auto-persistence', () => {
-		it('schedules persistence on user interaction', async () => {
-			// Mock the global function
-			global.window = {
-				...global.window,
-				scheduleSheetPersist: vi.fn()
-			};
-
-			// Simulate user interaction
-			const gridCanvas = component.container.querySelector('canvas');
-			await fireEvent.dblClick(gridCanvas);
-
-			const editor = component.container.querySelector('.editor');
-			editor.value = 'test';
-			await fireEvent.input(editor);
-			await fireEvent.keyDown(editor, { key: 'Enter' });
-
-			// Should schedule persistence
-			expect(global.window.scheduleSheetPersist).toHaveBeenCalled();
-		});
-	});
-
-	describe('Error Handling', () => {
-		it('handles storage initialization errors gracefully', () => {
-			// Mock console.warn to capture warnings
-			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-			// This would require more complex setup to trigger actual errors
-			// For now, just verify the component doesn't crash
-			expect(component.container).toBeTruthy();
-
-			consoleSpy.mockRestore();
 		});
 	});
 

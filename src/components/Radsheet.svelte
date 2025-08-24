@@ -1,7 +1,7 @@
 <script>
 	import HorizontalScrollbar from './HorizontalScrollbar.svelte';
 	import VerticalScrollbar from './VerticalScrollbar.svelte';
-	import { Sheet } from '../domain/sheet/SheetAggregate.js';
+	import { Sheet } from '../domain/sheet/sheet.js';
 	import { columns } from '../domain/constants/columns.js';
 
 	const CELL_HEIGHT = 30;
