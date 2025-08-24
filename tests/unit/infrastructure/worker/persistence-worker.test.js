@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { ChunkCodec } from '../../../src/domain/sheet.js';
+import { ChunkCodec } from '../../../../src/domain/codec/ChunkCodec.js';
 
 // Mock IndexedDB
 const mockIndexedDB = {

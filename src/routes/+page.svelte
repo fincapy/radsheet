@@ -1,5 +1,5 @@
 <script>
-	import Sheet from '$lib/sheet.svelte';
+	import Sheet from '../components/sheet.svelte';
 </script>
 
 <main class="flex h-screen w-full flex-col items-center justify-center">

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte/svelte5';
-import VerticalScrollbar from '../../../src/lib/VerticalScrollbar.svelte';
-import HorizontalScrollbar from '../../../src/lib/HorizontalScrollbar.svelte';
+import VerticalScrollbar from '../../../src/components/VerticalScrollbar.svelte';
+import HorizontalScrollbar from '../../../src/components/HorizontalScrollbar.svelte';
 
 describe('VerticalScrollbar', () => {
 	let component;

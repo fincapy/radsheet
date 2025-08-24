@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, fireEvent, screen } from '@testing-library/svelte/svelte5';
-import Sheet from '../../../src/lib/sheet.svelte';
+import Sheet from '../../../src/components/sheet.svelte';
 import { Sheet as SheetDomain } from '../../../src/domain/sheet.js';
 
 // Mock the worker client

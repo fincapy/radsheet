@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { createChunkPersistenceWorker } from '../../../src/lib/worker/persistence-worker-client.js';
+import { createChunkPersistenceWorker } from '../../../src/worker/persistence-worker-client.js';
 
 // Mock Worker
 const mockWorker = {

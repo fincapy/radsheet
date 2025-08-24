@@ -1,8 +1,8 @@
 <script>
-	import { Sheet, columns, ChunkStore } from '../domain/sheet.js';
-	import { createChunkPersistenceWorker } from './worker/persistence-worker-client.js';
 	import HorizontalScrollbar from './HorizontalScrollbar.svelte';
 	import VerticalScrollbar from './VerticalScrollbar.svelte';
+	import { Sheet } from '../domain/sheet/SheetAggregate.js';
+	import { columns } from '../domain/constants/columns.js';
 
 	const CELL_HEIGHT = 30;
 	const CELL_WIDTH = 120;
@@ -11,134 +11,6 @@
 	const SCROLLBAR_SIZE = 12;
 
 	let sheet = $state.raw(new Sheet());
-
-	// Initialize cold storage (optional - comment out to disable)
-	// Only run in browser environment
-	if (typeof window !== 'undefined') {
-		(async () => {
-			try {
-				const store = new ChunkStore();
-				await sheet.useStore(store);
-
-				// Expose for E2E tests
-				try {
-					window.__sheet = sheet;
-				} catch {}
-
-				// Attach dedicated persistence worker unless disabled via query param
-				const params = new URLSearchParams(location.search);
-				const disableWorker = params.get('noWorker') === '1';
-				if (!disableWorker) {
-					try {
-						const workerClient = createChunkPersistenceWorker({
-							databaseName: store.databaseName,
-							chunkStoreName: store.chunkStoreName,
-							metaStoreName: store.metaStoreName
-						});
-						if (workerClient) sheet.setOffThreadPersistor(workerClient);
-					} catch (e) {
-						console.warn('Worker persistence unavailable, falling back to main thread.', e);
-					}
-				}
-
-				// Start automatic background persistence
-				startAutoPersist();
-
-				// Preload a generous range so persisted data is immediately readable after reloads
-				// This makes getValue() return data without explicit loadRange() for common cases
-				try {
-					await sheet.loadRange(0, 0, 6000, columns.length - 1);
-				} catch {}
-			} catch (error) {
-				console.warn('Failed to initialize cold storage:', error);
-			}
-		})();
-	}
-
-	// Automatic background persistence
-	let autoPersistWorker = null;
-	let autoPersistInterval = null;
-	let isPersisting = $state(false);
-	let lastPersistTime = $state(0);
-	let persistQueue = [];
-	let isProcessingPersist = false;
-	let isUserInteracting = $state(false); // Track if user is actively interacting
-
-	function startAutoPersist() {
-		if (!sheet.chunkStore || typeof window === 'undefined') return;
-
-		// Smart persistence strategy
-		let persistTimeout = null;
-		let lastActivityTime = Date.now();
-
-		// Persist on user activity (typing, scrolling, etc.)
-		function schedulePersist() {
-			lastActivityTime = Date.now();
-
-			// Clear existing timeout
-			if (persistTimeout) {
-				clearTimeout(persistTimeout);
-			}
-
-			// Schedule persistence after 3 seconds of inactivity
-			persistTimeout = setTimeout(() => {
-				checkAndPersistDirtyChunks();
-			}, 3000);
-		}
-
-		// Also persist periodically (every 30 seconds) as backup
-		autoPersistInterval = setInterval(() => {
-			const timeSinceActivity = Date.now() - lastActivityTime;
-			if (timeSinceActivity > 5000) {
-				// Only if no recent activity
-				checkAndPersistDirtyChunks();
-			}
-		}, 30000);
-
-		// Persist when the page is about to unload
-		window.addEventListener('beforeunload', () => {
-			sheet.flush().catch(console.error);
-		});
-
-		// Expose schedulePersist for use in user interactions
-		window.scheduleSheetPersist = schedulePersist;
-	}
-
-	function checkAndPersistDirtyChunks() {
-		if (!sheet.chunkStore || isPersisting || isProcessingPersist || typeof window === 'undefined')
-			return;
-
-		// Don't persist if user is actively interacting
-		if (isUserInteracting) return;
-
-		isPersisting = true;
-		isProcessingPersist = true;
-
-		// Use requestIdleCallback to run persistence during idle time
-		const run = async () => {
-			try {
-				await sheet.flush();
-			} catch (error) {
-				console.error('Background persistence error:', error);
-			} finally {
-				isPersisting = false;
-				isProcessingPersist = false;
-				lastPersistTime = Date.now();
-			}
-		};
-		if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
-			requestIdleCallback(run, { timeout: 500 });
-		} else {
-			setTimeout(run, 50);
-		}
-	}
-
-	function stopAutoPersist() {
-		if (autoPersistInterval) {
-			clearInterval(autoPersistInterval);
-			autoPersistInterval = null;
-		}
-	}
 
 	let scrollTop = $state(0);
 	let scrollLeft = $state(0);
@@ -160,6 +32,9 @@
 	let focusCol = $state(null);
 	let lastActiveRow = $state(0);
 	let lastActiveCol = $state(0);
+
+	// user interaction flag for throttling/scheduling persistence
+	let isUserInteracting = $state(false);
 
 	// simple in-place read/write adapters so we work with different Sheet APIs
 	function readCell(r, c) {
@@ -872,63 +747,9 @@
 	});
 
 	function addRows() {
-		console.log('addRows');
 		sheet.addRows(1000);
-		console.log('sheet.numRows', sheet.numRows);
 		sheetVersion++;
 	}
-
-	async function saveToDisk() {
-		try {
-			isPersisting = true;
-			// Yield so UI displays "saving..." before flush resolves
-			await new Promise((r) => setTimeout(r, 0));
-			await sheet.flush();
-			lastPersistTime = Date.now();
-		} finally {
-			isPersisting = false;
-		}
-	}
-
-	// Cold storage integration - load chunks when scrolling to new areas
-	let lastLoadedRange = { top: -1, left: -1, bottom: -1, right: -1 };
-
-	async function loadVisibleRange() {
-		if (!sheet.chunkStore) return; // No cold storage enabled
-
-		// Only load if we've moved significantly (avoid loading on every scroll)
-		const margin = 2; // Load 2 chunks beyond visible area
-		const chunkSize = 64;
-		const newRange = {
-			top: Math.max(0, startIndexRow - margin * chunkSize),
-			left: Math.max(0, startIndexCol - margin * chunkSize),
-			bottom: Math.min(sheet.numRows - 1, endIndexRow + margin * chunkSize),
-			right: Math.min(columns.length - 1, endIndexCol + margin * chunkSize)
-		};
-
-		// Check if we need to load new chunks
-		if (
-			newRange.top !== lastLoadedRange.top ||
-			newRange.left !== lastLoadedRange.left ||
-			newRange.bottom !== lastLoadedRange.bottom ||
-			newRange.right !== lastLoadedRange.right
-		) {
-			await sheet.loadRange(newRange.top, newRange.left, newRange.bottom, newRange.right);
-			lastLoadedRange = newRange;
-			// Trigger repaint to show newly loaded data
-			sheetVersion++;
-		}
-	}
-
-	// Load chunks when scrolling changes
-	$effect(() => {
-		startIndexRow;
-		startIndexCol;
-		endIndexRow;
-		endIndexCol;
-		sheetVersion;
-		loadVisibleRange();
-	});
 </script>
 
 <svelte:window onkeydown={onKeyDown} />

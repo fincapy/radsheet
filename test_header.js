@@ -1,0 +1,26 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import {
+	computeLocalIndexWithinChunk,
+	GlobalStringTable,
+	LeastRecentlyUsedCache,
+	rleEncodeUint8,
+	rleDecodeUint8,
+	writeVarintUnsigned,
+	readVarintUnsigned,
+	concatUint8,
+	float64ArrayToBytes,
+	bytesToFloat64Array,
+	createDenseChunk,
+	createSparseChunk,
+	ChunkCodec,
+	ChunkStore,
+	Sheet,
+	CELL_TYPE_EMPTY,
+	CELL_TYPE_STRING,
+	CELL_TYPE_NUMBER,
+	CELLS_PER_CHUNK,
+	PROMOTE_TO_DENSE_FILL_RATIO,
+	DEMOTE_TO_SPARSE_FILL_RATIO,
+	CHUNK_NUM_ROWS,
+	CHUNK_NUM_COLS
+} from '../../src/domain/sheet.js';

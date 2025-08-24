@@ -91,7 +91,7 @@
 			tabindex="0"
 		>
 			<div
-				class="absolute h-full cursor-pointer rounded-full bg-gray-400 opacity-80 hover:bg-gray-500 {isDragging
+				class="absolute h-full rounded-full bg-gray-400 opacity-80 hover:bg-gray-500 {isDragging
 					? '!bg-gray-600'
 					: ''}"
 				style:width="{thumbWidth}px"
