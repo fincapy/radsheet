@@ -277,13 +277,18 @@
 	let auto = { vx: 0, vy: 0, raf: null };
 
 	// metrics
-	const totalHeight = $derived(sheet.numRows * CELL_HEIGHT);
+	const totalHeight = $derived((sheetVersion, sheet.numRows) * CELL_HEIGHT);
 	const totalWidth = $derived(columns.length * CELL_WIDTH);
 
 	// visible window
 	const startIndexRow = $derived(Math.floor(scrollTop / CELL_HEIGHT));
 	const visibleRowCount = $derived(Math.ceil(containerHeight / CELL_HEIGHT) + 1);
-	const endIndexRow = $derived(Math.min(sheet.numRows, startIndexRow + visibleRowCount));
+	const endIndexRow = $derived(
+		Math.min((sheetVersion, sheet.numRows), startIndexRow + visibleRowCount)
+	);
+
+	// expose reactive numRows for template/props updates on addRows()
+	const numRowsView = $derived((sheetVersion, sheet.numRows));
 
 	const startIndexCol = $derived(Math.floor(scrollLeft / CELL_WIDTH));
 	const visibleColCount = $derived(Math.ceil(containerWidth / CELL_WIDTH) + 1);
@@ -392,8 +397,10 @@
 		selecting = false;
 		const sel = getSelection();
 		if (sel) {
-			lastActiveRow = sel.r2;
-			lastActiveCol = sel.c2;
+			// After drag selection, keep the "active" cell at the original anchor
+			// so arrow navigation starts from the initially clicked cell.
+			lastActiveRow = anchorRow;
+			lastActiveCol = anchorCol;
 		}
 		stopAutoScroll();
 		dragMode = null;
@@ -551,11 +558,12 @@
 			// grid lines + labels
 			ctx.font = '600 12px Inter, system-ui, sans-serif';
 			ctx.textBaseline = 'middle';
+			ctx.textAlign = 'center';
 			for (let c = startIndexCol; c <= endIndexCol; c++) {
 				const x = (c - startIndexCol) * CELL_WIDTH;
 				ctx.fillStyle = '#475569';
 				const label = columns[c] ?? String(c);
-				ctx.fillText(label, x + 8, COLUMN_HEADER_HEIGHT / 2);
+				ctx.fillText(label, x + CELL_WIDTH / 2, COLUMN_HEADER_HEIGHT / 2);
 
 				ctx.strokeStyle = '#e5e7eb';
 				ctx.lineWidth = 1;
@@ -602,10 +610,11 @@
 			// lines + numbers
 			ctx.font = '600 12px Inter, system-ui, sans-serif';
 			ctx.textBaseline = 'middle';
+			ctx.textAlign = 'center';
 			ctx.fillStyle = '#475569';
 			for (let r = startIndexRow; r <= endIndexRow; r++) {
 				const y = (r - startIndexRow) * CELL_HEIGHT;
-				ctx.fillText(String(r + 1), 8, y + CELL_HEIGHT / 2);
+				ctx.fillText(String(r + 1), ROW_HEADER_WIDTH / 2, y + CELL_HEIGHT / 2);
 
 				ctx.strokeStyle = '#e5e7eb';
 				ctx.lineWidth = 1;
@@ -706,16 +715,25 @@
 			const selX1 = (c2 + 1 - startIndexCol) * CELL_WIDTH;
 			const selY0 = (r1 - startIndexRow) * CELL_HEIGHT;
 			const selY1 = (r2 + 1 - startIndexRow) * CELL_HEIGHT;
+			const isTopAtBoundary = selY0 <= 0;
+			const isLeftAtBoundary = selX0 <= 0;
+			const isRightAtBoundary = selX1 >= viewW;
+			const isBottomAtBoundary = selY1 >= viewH;
 
 			// Top edge visible?
 			if (r1 >= startIndexRow) {
 				const a = Math.max(selX0, 0);
 				const b = Math.min(selX1, viewW);
 				if (a < b) {
-					ctx.beginPath();
-					ctx.moveTo(a, selY0);
-					ctx.lineTo(b, selY0);
-					ctx.stroke();
+					if (isTopAtBoundary) {
+						ctx.fillStyle = ctx.strokeStyle;
+						ctx.fillRect(a, 0, b - a, 2);
+					} else {
+						ctx.beginPath();
+						ctx.moveTo(a, selY0);
+						ctx.lineTo(b, selY0);
+						ctx.stroke();
+					}
 				}
 			}
 			// Bottom edge visible?
@@ -734,10 +752,15 @@
 				const a = Math.max(selY0, 0);
 				const b = Math.min(selY1, viewH);
 				if (a < b) {
-					ctx.beginPath();
-					ctx.moveTo(selX0, a);
-					ctx.lineTo(selX0, b);
-					ctx.stroke();
+					if (isLeftAtBoundary) {
+						ctx.fillStyle = ctx.strokeStyle;
+						ctx.fillRect(0, a, 2, b - a);
+					} else {
+						ctx.beginPath();
+						ctx.moveTo(selX0, a);
+						ctx.lineTo(selX0, b);
+						ctx.stroke();
+					}
 				}
 			}
 			// Right edge visible?
@@ -750,6 +773,26 @@
 					ctx.lineTo(selX1, b);
 					ctx.stroke();
 				}
+			}
+
+			// Anchor cell highlight box (originally clicked cell)
+			// Only show when selection spans multiple cells to avoid double-thick border on single cell
+			if (
+				(r1 !== r2 || c1 !== c2) &&
+				anchorRow != null &&
+				anchorCol != null &&
+				anchorRow >= startIndexRow &&
+				anchorRow < endIndexRow &&
+				anchorCol >= startIndexCol &&
+				anchorCol < endIndexCol
+			) {
+				const ax = (anchorCol - startIndexCol) * CELL_WIDTH;
+				const ay = (anchorRow - startIndexRow) * CELL_HEIGHT;
+				ctx.save();
+				ctx.strokeStyle = '#3b82f6';
+				ctx.lineWidth = 2;
+				ctx.strokeRect(ax + 1, ay + 1, CELL_WIDTH - 2, CELL_HEIGHT - 2);
+				ctx.restore();
 			}
 		}
 
@@ -883,6 +926,7 @@
 		startIndexCol;
 		endIndexRow;
 		endIndexCol;
+		sheetVersion;
 		loadVisibleRange();
 	});
 </script>
@@ -989,7 +1033,7 @@
 			<button class="rounded border px-2 py-1" onclick={saveToDisk}>save to disk</button>
 		{/if}
 		<div class="text-sm text-gray-500">
-			rows: {sheet.numRows}, cols: {columns.length}
+			rows: {numRowsView}, cols: {columns.length}
 			{#if sheet.chunkStore}
 				| cache: {Math.round(sheet.estimatedBytesInHotCache() / 1024)}KB
 				{#if isPersisting}
