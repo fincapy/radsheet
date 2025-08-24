@@ -1,5 +1,6 @@
 <script>
-	import { Sheet, columns } from '../domain/sheet.svelte.js';
+	import { Sheet, columns, ChunkStore } from '../domain/sheet.js';
+	import { createChunkPersistenceWorker } from './worker/persistence-worker-client.js';
 	import HorizontalScrollbar from './HorizontalScrollbar.svelte';
 	import VerticalScrollbar from './VerticalScrollbar.svelte';
 
@@ -10,6 +11,134 @@
 	const SCROLLBAR_SIZE = 12;
 
 	let sheet = $state.raw(new Sheet());
+
+	// Initialize cold storage (optional - comment out to disable)
+	// Only run in browser environment
+	if (typeof window !== 'undefined') {
+		(async () => {
+			try {
+				const store = new ChunkStore();
+				await sheet.useStore(store);
+
+				// Expose for E2E tests
+				try {
+					window.__sheet = sheet;
+				} catch {}
+
+				// Attach dedicated persistence worker unless disabled via query param
+				const params = new URLSearchParams(location.search);
+				const disableWorker = params.get('noWorker') === '1';
+				if (!disableWorker) {
+					try {
+						const workerClient = createChunkPersistenceWorker({
+							databaseName: store.databaseName,
+							chunkStoreName: store.chunkStoreName,
+							metaStoreName: store.metaStoreName
+						});
+						if (workerClient) sheet.setOffThreadPersistor(workerClient);
+					} catch (e) {
+						console.warn('Worker persistence unavailable, falling back to main thread.', e);
+					}
+				}
+
+				// Start automatic background persistence
+				startAutoPersist();
+
+				// Preload a generous range so persisted data is immediately readable after reloads
+				// This makes getValue() return data without explicit loadRange() for common cases
+				try {
+					await sheet.loadRange(0, 0, 6000, columns.length - 1);
+				} catch {}
+			} catch (error) {
+				console.warn('Failed to initialize cold storage:', error);
+			}
+		})();
+	}
+
+	// Automatic background persistence
+	let autoPersistWorker = null;
+	let autoPersistInterval = null;
+	let isPersisting = $state(false);
+	let lastPersistTime = $state(0);
+	let persistQueue = [];
+	let isProcessingPersist = false;
+	let isUserInteracting = $state(false); // Track if user is actively interacting
+
+	function startAutoPersist() {
+		if (!sheet.chunkStore || typeof window === 'undefined') return;
+
+		// Smart persistence strategy
+		let persistTimeout = null;
+		let lastActivityTime = Date.now();
+
+		// Persist on user activity (typing, scrolling, etc.)
+		function schedulePersist() {
+			lastActivityTime = Date.now();
+
+			// Clear existing timeout
+			if (persistTimeout) {
+				clearTimeout(persistTimeout);
+			}
+
+			// Schedule persistence after 3 seconds of inactivity
+			persistTimeout = setTimeout(() => {
+				checkAndPersistDirtyChunks();
+			}, 3000);
+		}
+
+		// Also persist periodically (every 30 seconds) as backup
+		autoPersistInterval = setInterval(() => {
+			const timeSinceActivity = Date.now() - lastActivityTime;
+			if (timeSinceActivity > 5000) {
+				// Only if no recent activity
+				checkAndPersistDirtyChunks();
+			}
+		}, 30000);
+
+		// Persist when the page is about to unload
+		window.addEventListener('beforeunload', () => {
+			sheet.flush().catch(console.error);
+		});
+
+		// Expose schedulePersist for use in user interactions
+		window.scheduleSheetPersist = schedulePersist;
+	}
+
+	function checkAndPersistDirtyChunks() {
+		if (!sheet.chunkStore || isPersisting || isProcessingPersist || typeof window === 'undefined')
+			return;
+
+		// Don't persist if user is actively interacting
+		if (isUserInteracting) return;
+
+		isPersisting = true;
+		isProcessingPersist = true;
+
+		// Use requestIdleCallback to run persistence during idle time
+		const run = async () => {
+			try {
+				await sheet.flush();
+			} catch (error) {
+				console.error('Background persistence error:', error);
+			} finally {
+				isPersisting = false;
+				isProcessingPersist = false;
+				lastPersistTime = Date.now();
+			}
+		};
+		if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+			requestIdleCallback(run, { timeout: 500 });
+		} else {
+			setTimeout(run, 50);
+		}
+	}
+
+	function stopAutoPersist() {
+		if (autoPersistInterval) {
+			clearInterval(autoPersistInterval);
+			autoPersistInterval = null;
+		}
+	}
 
 	let scrollTop = $state(0);
 	let scrollLeft = $state(0);
@@ -40,20 +169,31 @@
 		return '';
 	}
 	function writeCell(r, c, v) {
-		let ret;
-		if (sheet?.setValue) ret = sheet.setValue(r, c, v);
-		else if (sheet?.set) ret = sheet.set(r, c, v);
-		else if (sheet?.cells) {
+		if (sheet?.setValue) {
+			sheet.setValue(r, c, v);
+		} else if (sheet?.set) {
+			let ret = sheet.set(r, c, v);
+			if (ret && ret !== sheet) sheet = ret; // support immutable returns
+		} else if (sheet?.cells) {
 			sheet.cells[`${r},${c}`] = v;
-			ret = sheet;
 		}
-		if (ret && ret !== sheet) sheet = ret; // support immutable returns
 		sheetVersion++;
+
+		// Mark user as interacting
+		isUserInteracting = true;
+		setTimeout(() => {
+			isUserInteracting = false;
+		}, 100); // Clear after 100ms
+
+		// Schedule background persistence
+		if (typeof window !== 'undefined' && window.scheduleSheetPersist) {
+			window.scheduleSheetPersist();
+		}
 	}
 
 	// editor overlay
 	let editor = $state({ open: false, row: 0, col: 0, value: '' });
-	let inputEl = $state(null)
+	let inputEl = $state(null);
 
 	function openEditorAt(row, col, seedText = null) {
 		scrollCellIntoView(row, col);
@@ -67,7 +207,8 @@
 		queueMicrotask(() => {
 			if (!inputEl) return;
 			inputEl.focus({ preventScroll: true });
-			if (seedText == null) inputEl.select(); // replace existing by default
+			if (seedText == null)
+				inputEl.select(); // replace existing by default
 			else inputEl.setSelectionRange(editor.value.length, editor.value.length);
 		});
 		drawHeaders();
@@ -76,29 +217,57 @@
 	function commitEditor(save) {
 		if (!editor.open) return;
 		const { row, col, value } = editor;
+		console.log('commitEditor called with:', { save, row, col, value });
 		editor.open = false;
-		if (save) writeCell(row, col, value);
+		if (save) {
+			console.log('Calling writeCell with:', { row, col, value });
+			writeCell(row, col, value);
+		}
 		anchorRow = focusRow = lastActiveRow = row;
 		anchorCol = focusCol = lastActiveCol = col;
 		drawHeaders();
 		drawGrid();
 	}
 	function onEditorKeyDown(e) {
+		console.log('onEditorKeyDown called with key:', e.key);
 		if (e.key === 'Enter') {
+			console.log('Handling Enter key');
+			e.preventDefault();
 			commitEditor(true);
 			// move down like spreadsheets
 			moveFocusBy(1, 0);
 			openEditorAt(lastActiveRow, lastActiveCol);
+		} else if (e.key === 'ArrowRight') {
 			e.preventDefault();
+			commitEditor(true);
+			moveFocusBy(0, 1);
+			openEditorAt(lastActiveRow, lastActiveCol);
+		} else if (e.key === 'ArrowLeft') {
+			e.preventDefault();
+			commitEditor(true);
+			moveFocusBy(0, -1);
+			openEditorAt(lastActiveRow, lastActiveCol);
+		} else if (e.key === 'ArrowUp') {
+			e.preventDefault();
+			commitEditor(true);
+			moveFocusBy(-1, 0);
+			openEditorAt(lastActiveRow, lastActiveCol);
+		} else if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			commitEditor(true);
+			moveFocusBy(1, 0);
+			openEditorAt(lastActiveRow, lastActiveCol);
 		} else if (e.key === 'Escape') {
-			commitEditor(false);
+			console.log('Handling Escape key');
 			e.preventDefault();
+			commitEditor(false);
 		} else if (e.key === 'Tab') {
+			console.log('Handling Tab key');
+			e.preventDefault();
 			const dir = e.shiftKey ? -1 : 1;
 			commitEditor(true);
 			moveFocusBy(0, dir);
 			openEditorAt(lastActiveRow, lastActiveCol);
-			e.preventDefault();
 		}
 	}
 
@@ -108,25 +277,25 @@
 	let auto = { vx: 0, vy: 0, raf: null };
 
 	// metrics
-	const totalHeight = $derived(sheet.rowLength * CELL_HEIGHT);
-	const totalWidth = $derived(sheet.columns.length * CELL_WIDTH);
+	const totalHeight = $derived(sheet.numRows * CELL_HEIGHT);
+	const totalWidth = $derived(columns.length * CELL_WIDTH);
 
 	// visible window
 	const startIndexRow = $derived(Math.floor(scrollTop / CELL_HEIGHT));
 	const visibleRowCount = $derived(Math.ceil(containerHeight / CELL_HEIGHT) + 1);
-	const endIndexRow = $derived(Math.min(sheet.rowLength, startIndexRow + visibleRowCount));
+	const endIndexRow = $derived(Math.min(sheet.numRows, startIndexRow + visibleRowCount));
 
 	const startIndexCol = $derived(Math.floor(scrollLeft / CELL_WIDTH));
 	const visibleColCount = $derived(Math.ceil(containerWidth / CELL_WIDTH) + 1);
-	const endIndexCol = $derived(Math.min(sheet.columns.length, startIndexCol + visibleColCount));
+	const endIndexCol = $derived(Math.min(columns.length, startIndexCol + visibleColCount));
 
 	// selection helper (compute on demand)
 	function getSelection() {
 		if (anchorRow == null || focusRow == null) return null;
 		const r1 = Math.max(0, Math.min(anchorRow, focusRow));
-		const r2 = Math.min(sheet.rowLength - 1, Math.max(anchorRow, focusRow));
+		const r2 = Math.min(sheet.numRows - 1, Math.max(anchorRow, focusRow));
 		const c1 = Math.max(0, Math.min(anchorCol, focusCol));
-		const c2 = Math.min(sheet.columns.length - 1, Math.max(anchorCol, focusCol));
+		const c2 = Math.min(columns.length - 1, Math.max(anchorCol, focusCol));
 		return { r1, r2, c1, c2 };
 	}
 
@@ -140,6 +309,17 @@
 	function onWheel(e) {
 		e.preventDefault();
 		clampScroll(scrollTop + e.deltaY, scrollLeft + e.deltaX);
+
+		// Mark user as interacting
+		isUserInteracting = true;
+		setTimeout(() => {
+			isUserInteracting = false;
+		}, 200); // Clear after 200ms for scrolling
+
+		// Schedule background persistence on scroll activity
+		if (typeof window !== 'undefined' && window.scheduleSheetPersist) {
+			window.scheduleSheetPersist();
+		}
 	}
 
 	// helpers: local pointer coords
@@ -151,7 +331,8 @@
 	// map pixel → cell
 	function pointToCell(x, y) {
 		const col = Math.floor((x + scrollLeft) / CELL_WIDTH);
-		const row = Math.floor((y + scrollTop) / CELL_HEIGHT);
+		const adjustedY = y + scrollTop;
+		const row = Math.max(0, Math.floor(adjustedY / CELL_HEIGHT));
 		return { row, col };
 	}
 	function xToColInHeader(x) {
@@ -175,11 +356,11 @@
 		if (kind === 'row') {
 			focusRow = row;
 			anchorCol = 0;
-			focusCol = sheet.columns.length - 1;
+			focusCol = columns.length - 1;
 		} else if (kind === 'col') {
 			focusCol = col;
 			anchorRow = 0;
-			focusRow = sheet.rowLength - 1;
+			focusRow = sheet.numRows - 1;
 		} else {
 			focusRow = row;
 			focusCol = col;
@@ -194,14 +375,14 @@
 	function updateSelectionTo(row, col) {
 		if (!selecting) return;
 		if (dragMode === 'row') {
-			focusRow = clamp(row, 0, sheet.rowLength - 1);
-			focusCol = sheet.columns.length - 1; // stick to full width
+			focusRow = clamp(row, 0, sheet.numRows - 1);
+			focusCol = columns.length - 1; // stick to full width
 		} else if (dragMode === 'col') {
-			focusCol = clamp(col, 0, sheet.columns.length - 1);
-			focusRow = sheet.rowLength - 1; // stick to full height
+			focusCol = clamp(col, 0, columns.length - 1);
+			focusRow = sheet.numRows - 1; // stick to full height
 		} else {
-			focusRow = clamp(row, 0, sheet.rowLength - 1);
-			focusCol = clamp(col, 0, sheet.columns.length - 1);
+			focusRow = clamp(row, 0, sheet.numRows - 1);
+			focusCol = clamp(col, 0, columns.length - 1);
 		}
 		drawHeaders();
 		drawGrid();
@@ -218,10 +399,16 @@
 		dragMode = null;
 		drawHeaders();
 		drawGrid();
+
+		// Clear user interaction flag after selection ends
+		setTimeout(() => {
+			isUserInteracting = false;
+		}, 100);
 	}
 
 	// pointer handlers - GRID
 	function onGridPointerDown(e) {
+		isUserInteracting = true;
 		gridCanvas.setPointerCapture(e.pointerId);
 		const { x, y } = localXY(gridCanvas, e);
 		lastPointer = { x, y };
@@ -284,6 +471,14 @@
 	function onRowHeadPointerUp(e) {
 		rowHeadCanvas.releasePointerCapture(e.pointerId);
 		endSelection();
+	}
+
+	function handleAnyDblClick(e) {
+		// Fallback: if a canvas receives a dblclick (e.g., header), open editor at current focus
+		const target = e.target;
+		if (target && target.tagName && target.tagName.toLowerCase() === 'canvas') {
+			if (!editor.open) openEditorAt(lastActiveRow, lastActiveCol);
+		}
 	}
 
 	// Auto-scroll while dragging near edges
@@ -575,7 +770,16 @@
 			e.preventDefault();
 			return;
 		}
-		const nav = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1], PageUp: [-visibleRowCount + 1, 0], PageDown: [visibleRowCount - 1, 0], Home: [0, -lastActiveCol], End: [0, sheet.columns.length] };
+		const nav = {
+			ArrowUp: [-1, 0],
+			ArrowDown: [1, 0],
+			ArrowLeft: [0, -1],
+			ArrowRight: [0, 1],
+			PageUp: [-visibleRowCount + 1, 0],
+			PageDown: [visibleRowCount - 1, 0],
+			Home: [0, -lastActiveCol],
+			End: [0, columns.length]
+		};
 		if (e.key in nav) {
 			const [dr, dc] = nav[e.key];
 			moveFocusBy(dr, dc);
@@ -583,8 +787,8 @@
 		}
 	}
 	function moveFocusBy(dr, dc) {
-		let r = Math.min(Math.max(lastActiveRow + dr, 0), sheet.rowLength - 1);
-		let c = Math.min(Math.max(lastActiveCol + dc, 0), sheet.columns.length - 1);
+		let r = Math.min(Math.max(lastActiveRow + dr, 0), sheet.numRows - 1);
+		let c = Math.min(Math.max(lastActiveCol + dc, 0), columns.length - 1);
 		anchorRow = focusRow = lastActiveRow = r;
 		anchorCol = focusCol = lastActiveCol = c;
 		scrollCellIntoView(r, c);
@@ -607,25 +811,81 @@
 
 	// Redraw on relevant changes — explicitly read deps so $effect tracks them
 	$effect(() => {
-		anchorRow; anchorCol; focusRow; focusCol; // depend on raw selection drivers
-		scrollTop; scrollLeft;
-		containerWidth; containerHeight;
-		startIndexRow; startIndexCol; endIndexRow; endIndexCol;
+		anchorRow;
+		anchorCol;
+		focusRow;
+		focusCol; // depend on raw selection drivers
+		scrollTop;
+		scrollLeft;
+		containerWidth;
+		containerHeight;
+		startIndexRow;
+		startIndexCol;
+		endIndexRow;
+		endIndexCol;
 		sheetVersion;
 		drawHeaders();
 		drawGrid();
 	});
 
 	function addRows() {
-		sheet = sheet.addRows ? sheet.addRows() : sheet;
+		console.log('addRows');
+		sheet.addRows(1000);
+		console.log('sheet.numRows', sheet.numRows);
 		sheetVersion++;
 	}
-</script>
 
-<style>
-	.canvas { display: block; touch-action: none; }
-	.editor { box-sizing: border-box; }
-</style>
+	async function saveToDisk() {
+		try {
+			isPersisting = true;
+			// Yield so UI displays "saving..." before flush resolves
+			await new Promise((r) => setTimeout(r, 0));
+			await sheet.flush();
+			lastPersistTime = Date.now();
+		} finally {
+			isPersisting = false;
+		}
+	}
+
+	// Cold storage integration - load chunks when scrolling to new areas
+	let lastLoadedRange = { top: -1, left: -1, bottom: -1, right: -1 };
+
+	async function loadVisibleRange() {
+		if (!sheet.chunkStore) return; // No cold storage enabled
+
+		// Only load if we've moved significantly (avoid loading on every scroll)
+		const margin = 2; // Load 2 chunks beyond visible area
+		const chunkSize = 64;
+		const newRange = {
+			top: Math.max(0, startIndexRow - margin * chunkSize),
+			left: Math.max(0, startIndexCol - margin * chunkSize),
+			bottom: Math.min(sheet.numRows - 1, endIndexRow + margin * chunkSize),
+			right: Math.min(columns.length - 1, endIndexCol + margin * chunkSize)
+		};
+
+		// Check if we need to load new chunks
+		if (
+			newRange.top !== lastLoadedRange.top ||
+			newRange.left !== lastLoadedRange.left ||
+			newRange.bottom !== lastLoadedRange.bottom ||
+			newRange.right !== lastLoadedRange.right
+		) {
+			await sheet.loadRange(newRange.top, newRange.left, newRange.bottom, newRange.right);
+			lastLoadedRange = newRange;
+			// Trigger repaint to show newly loaded data
+			sheetVersion++;
+		}
+	}
+
+	// Load chunks when scrolling changes
+	$effect(() => {
+		startIndexRow;
+		startIndexCol;
+		endIndexRow;
+		endIndexCol;
+		loadVisibleRange();
+	});
+</script>
 
 <svelte:window onkeydown={onKeyDown} />
 
@@ -644,6 +904,7 @@
 			onpointerdown={onColHeadPointerDown}
 			onpointermove={onColHeadPointerMove}
 			onpointerup={onColHeadPointerUp}
+			ondblclick={handleAnyDblClick}
 			style="height: {COLUMN_HEADER_HEIGHT}px; width: 100%;"
 			bind:clientWidth={containerWidth}
 		></canvas>
@@ -660,6 +921,7 @@
 			onpointerdown={onRowHeadPointerDown}
 			onpointermove={onRowHeadPointerMove}
 			onpointerup={onRowHeadPointerUp}
+			ondblclick={handleAnyDblClick}
 			style="width:{ROW_HEADER_WIDTH}px; height:100%;"
 			bind:clientHeight={containerHeight}
 		></canvas>
@@ -684,12 +946,16 @@
 
 		{#if editor.open}
 			<input
-				class="editor absolute z-20 border-2 border-blue-500 outline-none bg-white px-2 text-sm"
+				class="editor absolute z-20 border-2 border-blue-500 bg-white px-2 text-sm outline-none"
 				bind:this={inputEl}
-				style="left: {editor.col * CELL_WIDTH - scrollLeft}px; top: {editor.row * CELL_HEIGHT - scrollTop}px; width: {CELL_WIDTH}px; height: {CELL_HEIGHT}px;"
+				style="left: {editor.col * CELL_WIDTH - scrollLeft}px; top: {editor.row * CELL_HEIGHT -
+					scrollTop}px; width: {CELL_WIDTH}px; height: {CELL_HEIGHT}px;"
 				value={editor.value}
 				oninput={(e) => (editor.value = e.currentTarget.value)}
-				onkeydown={onEditorKeyDown}
+				onkeydown={(e) => {
+					console.log('Raw keydown event:', e.key);
+					onEditorKeyDown(e);
+				}}
 				onblur={() => commitEditor(true)}
 			/>
 		{/if}
@@ -719,6 +985,29 @@
 
 	<div class="col-span-3 flex items-center gap-2 p-2">
 		<button class="rounded border px-2 py-1" onclick={addRows}>add 1000 rows</button>
-		<div class="text-sm text-gray-500">rows: {sheet.rowLength}, cols: {sheet.columns.length}</div>
+		{#if sheet.chunkStore}
+			<button class="rounded border px-2 py-1" onclick={saveToDisk}>save to disk</button>
+		{/if}
+		<div class="text-sm text-gray-500">
+			rows: {sheet.numRows}, cols: {columns.length}
+			{#if sheet.chunkStore}
+				| cache: {Math.round(sheet.estimatedBytesInHotCache() / 1024)}KB
+				{#if isPersisting}
+					| saving...
+				{:else if lastPersistTime > 0}
+					| saved {Math.round((Date.now() - lastPersistTime) / 1000)}s ago
+				{/if}
+			{/if}
+		</div>
 	</div>
 </div>
+
+<style>
+	.canvas {
+		display: block;
+		touch-action: none;
+	}
+	.editor {
+		box-sizing: border-box;
+	}
+</style>

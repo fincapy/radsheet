@@ -103,7 +103,7 @@
 			class="flex h-3 w-3 flex-shrink-0 items-center justify-center border-l border-gray-300 bg-gray-50 hover:bg-gray-200"
 			onclick={scrollLeftBy}
 			title="Scroll left"
-			aria-label="Scroll left"
+			aria-label="Horizontal scroll left"
 		>
 			<svg
 				class="h-2 w-2 text-gray-600"
@@ -119,7 +119,7 @@
 			class="flex h-3 w-3 flex-shrink-0 items-center justify-center border-l border-gray-300 bg-gray-50 hover:bg-gray-200"
 			onclick={scrollRightBy}
 			title="Scroll right"
-			aria-label="Scroll right"
+			aria-label="Horizontal scroll right"
 		>
 			<svg
 				class="h-2 w-2 text-gray-600"

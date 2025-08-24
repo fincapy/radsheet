@@ -476,7 +476,7 @@ export class ChunkStore {
 	async _openIfNeeded() {
 		if (this.database) return;
 		this.database = await new Promise((resolve, reject) => {
-			const request = this._idbFactory.open(this.dbName, 1);
+			const request = this._idbFactory.open(this.databaseName, 1);
 			request.onupgradeneeded = () => {
 				const db = request.result;
 				if (!db.objectStoreNames.contains(this.chunkStoreName))
@@ -551,16 +551,25 @@ export class ChunkStore {
 
 export class Sheet {
 	constructor() {
-		this.numRows = 0;
+		this.numRows = 1000;
 		this.globalStringTable = new GlobalStringTable();
 		this._hotChunks = new LeastRecentlyUsedCache(DEFAULT_HOT_CHUNK_CAPACITY);
 		this.chunkStore = null;
 		this._lastChunkKey = null;
 		this._lastChunk = null;
 
+		// Background persistence queue (keys -> chunk references)
+		this._persistQueue = new Map();
+		this._processingPersistQueue = false;
+		this._persistConcurrency = 2;
+		this._persistInFlight = 0;
+		this._offThreadPersistor = null; // optional: { persistChunk, persistStringTable }
+		this._resolveDrain = null;
+
 		this._hotChunks.onEvict = (evictedChunkKey, evictedChunk) => {
 			if (!this.chunkStore || !evictedChunk.isDirty) return;
-			this._persistSingleChunk(evictedChunkKey, evictedChunk).catch(console.error);
+			// Defer eviction persistence to background queue
+			this._enqueuePersist(evictedChunkKey, evictedChunk);
 		};
 	}
 
@@ -570,6 +579,13 @@ export class Sheet {
 		this.chunkStore = chunkStore;
 		const persistedStrings = await this.chunkStore.getStringTableList();
 		if (persistedStrings) this.globalStringTable.loadFromList(persistedStrings);
+	}
+
+	// Optional off-thread persistor (e.g., Web Worker wrapper) with API:
+	//   async persistChunk(key, chunkSnapshot, stringTableListOrNull)
+	//   async persistStringTable(list)
+	setOffThreadPersistor(persistor) {
+		this._offThreadPersistor = persistor;
 	}
 
 	/* ------------------------------- Public API ------------------------------ */
@@ -886,22 +902,30 @@ export class Sheet {
 		const lastChunkRow = bottomRow >> CHUNK_ROW_SHIFT_BITS;
 		const lastChunkCol = rightCol >> CHUNK_COL_SHIFT_BITS;
 
-		const loadPromises = [];
+		// Progressive decode to avoid long main-thread blocks
+		const decodeQueue = [];
 		for (let chunkRow = firstChunkRow; chunkRow <= lastChunkRow; chunkRow++) {
 			for (let chunkCol = firstChunkCol; chunkCol <= lastChunkCol; chunkCol++) {
 				const chunkKey = makeChunkKey(chunkRow, chunkCol);
 				if (this._hotChunks.has(chunkKey)) continue;
-				loadPromises.push(
-					(async () => {
-						const bytes = await this.chunkStore.getCompressedChunkBytes(chunkKey);
-						if (!bytes) return;
-						const decodedChunk = ChunkCodec.decodeChunk(bytes, this.globalStringTable);
-						this._hotChunks.set(chunkKey, decodedChunk);
-					})()
-				);
+				decodeQueue.push(chunkKey);
 			}
 		}
-		await Promise.all(loadPromises);
+		while (decodeQueue.length) {
+			const batch = decodeQueue.splice(0, 8);
+			const fetched = await Promise.all(
+				batch.map((key) => this.chunkStore.getCompressedChunkBytes(key))
+			);
+			for (let i = 0; i < batch.length; i++) {
+				const key = batch[i];
+				const bytes = fetched[i];
+				if (!bytes) continue;
+				const decodedChunk = ChunkCodec.decodeChunk(bytes, this.globalStringTable);
+				this._hotChunks.set(key, decodedChunk);
+			}
+			// Yield between batches
+			await new Promise((r) => setTimeout(r, 0));
+		}
 
 		// Make sure string table is up to date (useStore() already does this; here for safety)
 		if (this.globalStringTable.hasUnpersistedChanges && this.chunkStore) {
@@ -913,18 +937,15 @@ export class Sheet {
 	// Persist all dirty hot chunks + string table; await completion
 	async flush() {
 		if (!this.chunkStore) return;
-		const tasks = [];
+		// Enqueue all dirty chunks
 		for (const [chunkKey, chunk] of this._hotChunks.entries()) {
-			if (chunk.isDirty) tasks.push(this._persistSingleChunk(chunkKey, chunk));
+			if (chunk.isDirty) this._enqueuePersist(chunkKey, chunk);
 		}
-		if (this.globalStringTable.hasUnpersistedChanges) {
-			tasks.push(
-				this.chunkStore.putStringTableList(this.globalStringTable.stringById).then(() => {
-					this.globalStringTable.hasUnpersistedChanges = false;
-				})
-			);
-		}
-		await Promise.all(tasks);
+		// Persist string table less aggressively; include with first drain
+		const shouldPersistStrings = this.globalStringTable.hasUnpersistedChanges;
+		const drainPromise = new Promise((resolve) => (this._resolveDrain = resolve));
+		this._processPersistQueue(shouldPersistStrings).catch(console.error);
+		await drainPromise;
 	}
 
 	estimatedBytesInHotCache() {
@@ -964,6 +985,19 @@ export class Sheet {
 
 	async _persistSingleChunk(chunkKey, chunk) {
 		if (!this.chunkStore) return;
+		// If an off-thread persistor is available, snapshot and delegate
+		if (this._offThreadPersistor) {
+			const snapshot = this._snapshotChunkForTransfer(chunk);
+			await this._offThreadPersistor.persistChunk(
+				chunkKey,
+				snapshot,
+				this.globalStringTable.stringById
+			);
+			chunk.isDirty = false;
+			return;
+		}
+
+		// Fallback: main-thread encode/write
 		const compressedBytes = ChunkCodec.encodeChunk(chunk, this.globalStringTable);
 		await this.chunkStore.putCompressedChunkBytes(chunkKey, compressedBytes);
 		chunk.isDirty = false;
@@ -971,6 +1005,80 @@ export class Sheet {
 		if (this.globalStringTable.hasUnpersistedChanges) {
 			await this.chunkStore.putStringTableList(this.globalStringTable.stringById);
 			this.globalStringTable.hasUnpersistedChanges = false;
+		}
+	}
+
+	// ----------------------- Background persist helpers -----------------------
+
+	_enqueuePersist(chunkKey, chunk) {
+		// Keep most recent reference
+		this._persistQueue.set(chunkKey, chunk);
+		this._processPersistQueue().catch(console.error);
+	}
+
+	async _processPersistQueue(persistStrings = false) {
+		if (this._processingPersistQueue) return;
+		this._processingPersistQueue = true;
+		try {
+			while (this._persistQueue.size > 0 || this._persistInFlight > 0 || persistStrings) {
+				// Respect concurrency by launching up to N tasks
+				const toLaunch = Math.max(0, this._persistConcurrency - this._persistInFlight);
+				if (toLaunch === 0) {
+					await new Promise((r) => setTimeout(r, 0));
+					continue;
+				}
+				const keys = Array.from(this._persistQueue.keys()).slice(0, toLaunch);
+				for (const key of keys) {
+					const chunk = this._persistQueue.get(key);
+					this._persistQueue.delete(key);
+					this._persistInFlight++;
+					this._persistSingleChunk(key, chunk)
+						.catch(console.error)
+						.finally(() => {
+							this._persistInFlight--;
+						});
+				}
+				if (persistStrings) {
+					if (this._offThreadPersistor) {
+						await this._offThreadPersistor.persistStringTable(this.globalStringTable.stringById);
+						this.globalStringTable.hasUnpersistedChanges = false;
+					} else if (this.globalStringTable.hasUnpersistedChanges && this.chunkStore) {
+						await this.chunkStore.putStringTableList(this.globalStringTable.stringById);
+						this.globalStringTable.hasUnpersistedChanges = false;
+					}
+					persistStrings = false;
+				}
+				// Yield to keep UI responsive
+				await new Promise((r) => setTimeout(r, 0));
+			}
+		} finally {
+			this._processingPersistQueue = false;
+			const resolve = this._resolveDrain;
+			this._resolveDrain = null;
+			if (resolve) resolve();
+		}
+	}
+
+	_snapshotChunkForTransfer(chunk) {
+		if (chunk.kind === 'dense') {
+			// Copy to allow transfer without detaching live arrays
+			return {
+				kind: 'dense',
+				nonEmptyCellCount: chunk.nonEmptyCellCount,
+				tagByLocalIndex: new Uint8Array(chunk.tagByLocalIndex),
+				numberByLocalIndex: new Float64Array(chunk.numberByLocalIndex),
+				stringIdByLocalIndex: new Uint32Array(chunk.stringIdByLocalIndex)
+			};
+		} else {
+			// Pre-register strings into the global string table so the worker can map IDs
+			const rawEntries = Array.from(chunk.localIndexToValue.entries());
+			for (const [, v] of rawEntries) {
+				if (typeof v !== 'number' && typeof v !== 'boolean') {
+					this.globalStringTable.getIdForString(String(v));
+				}
+			}
+			const entries = rawEntries;
+			return { kind: 'sparse', nonEmptyCellCount: chunk.nonEmptyCellCount, entries };
 		}
 	}
 }

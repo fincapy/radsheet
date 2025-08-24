@@ -1,0 +1,5 @@
+---
+alwaysApply: true
+---
+
+always run e2e tests with npm run test:e2e
