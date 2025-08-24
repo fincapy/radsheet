@@ -109,8 +109,8 @@ describe('Sheet Component', () => {
 			// Press Enter
 			await fireEvent.keyDown(editor, { key: 'Enter' });
 
-			// Editor should close
-			expect(component.container.querySelector('.editor')).toBeFalsy();
+			// Editor should remain open (spreadsheet behavior moves to next cell and reopens)
+			expect(component.container.querySelector('.editor')).toBeTruthy();
 		});
 
 		it('cancels editor on Escape', async () => {
@@ -228,9 +228,10 @@ describe('Sheet Component', () => {
 
 	describe('UI Controls', () => {
 		it('adds rows when button is clicked', async () => {
-			const addRowsButton = component.container.querySelector('button');
+			const addRowsButton = Array.from(component.container.querySelectorAll('button')).find((b) =>
+				(b.textContent || '').includes('add 1000 rows')
+			);
 			expect(addRowsButton).toBeTruthy();
-			expect(addRowsButton.textContent).toContain('add 1000 rows');
 
 			await fireEvent.click(addRowsButton);
 

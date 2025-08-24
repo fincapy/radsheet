@@ -7,7 +7,10 @@
 	let dragStartScrollTop = 0;
 
 	const scrollbarVisible = $derived(totalHeight > viewportHeight);
-	const trackHeight = $derived(trackElement ? trackElement.clientHeight : 0);
+	// Fall back to viewportHeight in environments where clientHeight is 0 (e.g., JSDOM)
+	const trackHeight = $derived(
+		trackElement && trackElement.clientHeight > 0 ? trackElement.clientHeight : viewportHeight
+	);
 	const thumbHeight = $derived(
 		scrollbarVisible ? Math.max(20, (viewportHeight / totalHeight) * trackHeight) : 0
 	);

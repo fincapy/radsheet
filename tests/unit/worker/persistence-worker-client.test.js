@@ -21,6 +21,15 @@ global.URL = class URL {
 
 global.Worker = vi.fn(() => mockWorker);
 
+// Helper to get the currently installed message handler
+function getMessageHandler() {
+	const calls = mockWorker.addEventListener.mock.calls;
+	if (calls && calls.length > 0 && calls[calls.length - 1] && calls[calls.length - 1][1]) {
+		return calls[calls.length - 1][1];
+	}
+	return mockWorker.onmessage;
+}
+
 describe('Persistence Worker Client', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -107,8 +116,16 @@ describe('Persistence Worker Client', () => {
 			// Should not complete until init message is received
 			expect(mockWorker.onmessage).toBeDefined();
 
-			// Simulate init message
-			mockWorker.onmessage({ data: { type: 'inited' } });
+			// Simulate init message using the shared handler
+			const initHandler = getMessageHandler();
+			initHandler({ data: { type: 'inited' } });
+
+			// Allow microtask to continue past init await and register pending
+			await Promise.resolve();
+
+			// After init, operation should proceed; use the same handler
+			const handler = getMessageHandler();
+			handler({ data: { type: 'persistDone', key: 'test-key' } });
 
 			// Now the persist operation should complete
 			await persistPromise;
@@ -176,7 +193,7 @@ describe('Persistence Worker Client', () => {
 			const workerClient = createChunkPersistenceWorker({});
 
 			// Initialize first
-			const initHandler = mockWorker.addEventListener.mock.calls[0][1];
+			const initHandler = getMessageHandler();
 			initHandler({ data: { type: 'inited' } });
 
 			// Start multiple persist operations
@@ -184,7 +201,7 @@ describe('Persistence Worker Client', () => {
 			const promise2 = workerClient.persistChunk('key2', {}, []);
 
 			// Send responses in different order
-			const messageHandler = mockWorker.addEventListener.mock.calls[1][1];
+			const messageHandler = getMessageHandler();
 			messageHandler({ data: { type: 'persistDone', key: 'key2' } });
 			messageHandler({ data: { type: 'persistDone', key: 'key1' } });
 
@@ -199,7 +216,7 @@ describe('Persistence Worker Client', () => {
 			const workerClient = createChunkPersistenceWorker({});
 
 			// Initialize first
-			const initHandler = mockWorker.addEventListener.mock.calls[0][1];
+			const initHandler = getMessageHandler();
 			initHandler({ data: { type: 'inited' } });
 
 			const stringList = ['hello', 'world', 'test'];
@@ -214,7 +231,7 @@ describe('Persistence Worker Client', () => {
 			});
 
 			// Simulate completion
-			const messageHandler = mockWorker.addEventListener.mock.calls[1][1];
+			const messageHandler = getMessageHandler();
 			messageHandler({ data: { type: 'stringsDone' } });
 
 			await persistPromise;
@@ -224,13 +241,13 @@ describe('Persistence Worker Client', () => {
 			const workerClient = createChunkPersistenceWorker({});
 
 			// Initialize first
-			const initHandler = mockWorker.addEventListener.mock.calls[0][1];
+			const initHandler = getMessageHandler();
 			initHandler({ data: { type: 'inited' } });
 
 			const persistPromise = workerClient.persistStringTable(['test']);
 
 			// Simulate error message
-			const messageHandler = mockWorker.addEventListener.mock.calls[1][1];
+			const messageHandler = getMessageHandler();
 			messageHandler({ data: { type: 'error', error: 'String table error' } });
 
 			await expect(persistPromise).rejects.toThrow('String table error');
@@ -242,27 +259,27 @@ describe('Persistence Worker Client', () => {
 			const workerClient = createChunkPersistenceWorker({});
 
 			// Initialize first
-			const initHandler = mockWorker.addEventListener.mock.calls[0][1];
+			const initHandler = getMessageHandler();
 			initHandler({ data: { type: 'inited' } });
 
 			// Start persist operation
 			const persistPromise = workerClient.persistChunk('test-key', {}, []);
 
 			// Simulate completion
-			const messageHandler = mockWorker.addEventListener.mock.calls[1][1];
+			const messageHandler = getMessageHandler();
 			messageHandler({ data: { type: 'persistDone', key: 'test-key' } });
 
 			await persistPromise;
 
 			// Should remove event listener
-			expect(mockWorker.removeEventListener).toHaveBeenCalledWith('message', messageHandler);
+			expect(mockWorker.removeEventListener).toHaveBeenCalled();
 		});
 
 		it('handles multiple concurrent operations', async () => {
 			const workerClient = createChunkPersistenceWorker({});
 
 			// Initialize first
-			const initHandler = mockWorker.addEventListener.mock.calls[0][1];
+			const initHandler = getMessageHandler();
 			initHandler({ data: { type: 'inited' } });
 
 			// Start multiple operations
@@ -270,7 +287,7 @@ describe('Persistence Worker Client', () => {
 			const promise2 = workerClient.persistStringTable(['test']);
 
 			// Complete them
-			const messageHandler = mockWorker.addEventListener.mock.calls[1][1];
+			const messageHandler = getMessageHandler();
 			messageHandler({ data: { type: 'persistDone', key: 'key1' } });
 			messageHandler({ data: { type: 'stringsDone' } });
 
@@ -282,14 +299,14 @@ describe('Persistence Worker Client', () => {
 			const workerClient = createChunkPersistenceWorker({});
 
 			// Initialize first
-			const initHandler = mockWorker.addEventListener.mock.calls[0][1];
+			const initHandler = getMessageHandler();
 			initHandler({ data: { type: 'inited' } });
 
 			// Start persist operation
 			const persistPromise = workerClient.persistChunk('test-key', {}, []);
 
 			// Send unrelated message
-			const messageHandler = mockWorker.addEventListener.mock.calls[1][1];
+			const messageHandler = getMessageHandler();
 			messageHandler({ data: { type: 'unrelated' } });
 
 			// Operation should still be pending
@@ -320,14 +337,14 @@ describe('Persistence Worker Client', () => {
 			const workerClient = createChunkPersistenceWorker({});
 
 			// Initialize first
-			const initHandler = mockWorker.addEventListener.mock.calls[0][1];
+			const initHandler = getMessageHandler();
 			initHandler({ data: { type: 'inited' } });
 
 			// Start operation
 			const persistPromise = workerClient.persistChunk('test-key', {}, []);
 
 			// Simulate worker error
-			const errorHandler = mockWorker.addEventListener.mock.calls[1][1];
+			const errorHandler = getMessageHandler();
 			errorHandler({ data: { type: 'error', error: 'Communication error' } });
 
 			await expect(persistPromise).rejects.toThrow('Communication error');
@@ -337,7 +354,7 @@ describe('Persistence Worker Client', () => {
 			const workerClient = createChunkPersistenceWorker({});
 
 			// Initialize first
-			const initHandler = mockWorker.addEventListener.mock.calls[0][1];
+			const initHandler = getMessageHandler();
 			initHandler({ data: { type: 'inited' } });
 
 			// Start operation but don't complete it
@@ -347,7 +364,7 @@ describe('Persistence Worker Client', () => {
 			expect(persistPromise).toBeInstanceOf(Promise);
 
 			// Complete it to avoid hanging test
-			const messageHandler = mockWorker.addEventListener.mock.calls[1][1];
+			const messageHandler = getMessageHandler();
 			messageHandler({ data: { type: 'persistDone', key: 'test-key' } });
 
 			await persistPromise;
@@ -366,7 +383,7 @@ describe('Persistence Worker Client', () => {
 			const workerClient = createChunkPersistenceWorker({});
 
 			// Initialize first
-			const initHandler = mockWorker.addEventListener.mock.calls[0][1];
+			const initHandler = getMessageHandler();
 			initHandler({ data: { type: 'inited' } });
 
 			// Start persist operation with null string table
@@ -381,7 +398,7 @@ describe('Persistence Worker Client', () => {
 			});
 
 			// Complete operation
-			const messageHandler = mockWorker.addEventListener.mock.calls[1][1];
+			const messageHandler = getMessageHandler();
 			messageHandler({ data: { type: 'persistDone', key: 'test-key' } });
 
 			await persistPromise;

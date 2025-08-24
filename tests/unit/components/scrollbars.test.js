@@ -122,6 +122,15 @@ describe('VerticalScrollbar', () => {
 
 	describe('Track Clicking', () => {
 		it('scrolls up when clicking above thumb', async () => {
+			// Start with non-zero scroll so clicking above attempts to go negative
+			component = render(VerticalScrollbar, {
+				props: {
+					scrollTop: 400,
+					totalHeight: 1000,
+					viewportHeight: 400,
+					onUpdate: onUpdateMock
+				}
+			});
 			const track = component.container.querySelector('.relative.flex-grow');
 			expect(track).toBeTruthy();
 
@@ -130,7 +139,7 @@ describe('VerticalScrollbar', () => {
 
 			expect(onUpdateMock).toHaveBeenCalled();
 			const newScrollTop = onUpdateMock.mock.calls[0][0];
-			expect(newScrollTop).toBeLessThan(0); // Should scroll up
+			expect(newScrollTop).toBeLessThan(400);
 		});
 
 		it('scrolls down when clicking below thumb', async () => {
@@ -154,7 +163,7 @@ describe('VerticalScrollbar', () => {
 
 			expect(onUpdateMock).toHaveBeenCalled();
 			const newScrollTop = onUpdateMock.mock.calls[0][0];
-			expect(newScrollTop).toBe(-40); // Should scroll up by 40px
+			expect(newScrollTop).toBe(0); // Clamped at top
 		});
 
 		it('scrolls down when down button is clicked', async () => {
@@ -335,6 +344,15 @@ describe('HorizontalScrollbar', () => {
 
 	describe('Track Clicking', () => {
 		it('scrolls left when clicking left of thumb', async () => {
+			// Start with non-zero scroll
+			component = render(HorizontalScrollbar, {
+				props: {
+					scrollLeft: 800,
+					totalWidth: 2000,
+					containerWidth: 800,
+					onUpdate: onUpdateMock
+				}
+			});
 			const track = component.container.querySelector('.relative.flex-grow');
 			expect(track).toBeTruthy();
 
@@ -343,7 +361,7 @@ describe('HorizontalScrollbar', () => {
 
 			expect(onUpdateMock).toHaveBeenCalled();
 			const newScrollLeft = onUpdateMock.mock.calls[0][0];
-			expect(newScrollLeft).toBeLessThan(0); // Should scroll left
+			expect(newScrollLeft).toBeLessThan(800);
 		});
 
 		it('scrolls right when clicking right of thumb', async () => {
@@ -367,7 +385,7 @@ describe('HorizontalScrollbar', () => {
 
 			expect(onUpdateMock).toHaveBeenCalled();
 			const newScrollLeft = onUpdateMock.mock.calls[0][0];
-			expect(newScrollLeft).toBe(-40); // Should scroll left by 40px
+			expect(newScrollLeft).toBe(0); // Clamped at left edge
 		});
 
 		it('scrolls right when right button is clicked', async () => {

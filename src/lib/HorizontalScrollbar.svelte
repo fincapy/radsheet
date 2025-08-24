@@ -7,7 +7,10 @@
 	let dragStartScrollLeft = 0;
 
 	const scrollbarVisible = $derived(totalWidth > containerWidth);
-	const trackWidth = $derived(trackElement ? trackElement.clientWidth : 0);
+	// Fall back to containerWidth in environments where clientWidth is 0 (e.g., JSDOM)
+	const trackWidth = $derived(
+		trackElement && trackElement.clientWidth > 0 ? trackElement.clientWidth : containerWidth
+	);
 	const thumbWidth = $derived(
 		scrollbarVisible ? Math.max(20, (containerWidth / totalWidth) * trackWidth) : 0
 	);
@@ -103,7 +106,7 @@
 			class="flex h-3 w-3 flex-shrink-0 items-center justify-center border-l border-gray-300 bg-gray-50 hover:bg-gray-200"
 			onclick={scrollLeftBy}
 			title="Scroll left"
-			aria-label="Horizontal scroll left"
+			aria-label="Scroll left"
 		>
 			<svg
 				class="h-2 w-2 text-gray-600"
@@ -119,7 +122,7 @@
 			class="flex h-3 w-3 flex-shrink-0 items-center justify-center border-l border-gray-300 bg-gray-50 hover:bg-gray-200"
 			onclick={scrollRightBy}
 			title="Scroll right"
-			aria-label="Horizontal scroll right"
+			aria-label="Scroll right"
 		>
 			<svg
 				class="h-2 w-2 text-gray-600"

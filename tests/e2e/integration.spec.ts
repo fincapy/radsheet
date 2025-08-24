@@ -38,15 +38,15 @@ test.describe('Integration Tests', () => {
 
 			// 1. User enters data
 			const cell = page.locator('canvas').nth(2); // Main grid canvas
-			await cell.dblclick({ position: { x: 50, y: 50 } });
+			await cell.dblclick({ position: { x: 50, y: 15 } });
 
 			const editor = page.locator('.editor');
 			await editor.fill('Integration Test Data');
 			await editor.press('Enter');
 
 			// 2. Navigate and enter more data
+			await page.keyboard.press('ArrowUp');
 			await page.keyboard.press('ArrowRight');
-			await page.keyboard.press('Enter');
 			await editor.fill('Second Cell');
 			await editor.press('Enter');
 
