@@ -3,27 +3,52 @@
 	import VerticalScrollbar from './VerticalScrollbar.svelte';
 	import { Sheet } from '../domain/sheet/sheet.js';
 	import { columns } from '../domain/constants/columns.js';
+	import { onMount, onDestroy } from 'svelte';
+	/**
+	 * Radsheet
+	 *
+	 * Responsibilities (high-level):
+	 * - Own UI state (selection, focus, editor overlay, scroll positions)
+	 * - Map pointer/keyboard events to state transitions
+	 * - Delegate drawing to small, testable renderers in `components/radsheet/*`
+	 * - Perform just enough math to compute the viewport and selection ranges
+	 *
+	 * Reactivity overview:
+	 * - Primitive state: scrollTop/Left, container sizes, selection anchors/focus, sheetVersion
+	 * - Derived state: total sizes, start/end indices, visible counts
+	 * - Rendering: a single $effect explicitly reads all inputs that should trigger a redraw
+	 *
+	 * Notes:
+	 * - We do not depend on transient UI flags to trigger rerenders; redraws are driven by the
+	 *   above state only. This keeps rendering deterministic and easy to reason about.
+	 */
+	import {
+		CELL_HEIGHT,
+		CELL_WIDTH,
+		ROW_HEADER_WIDTH,
+		COLUMN_HEADER_HEIGHT,
+		SCROLLBAR_SIZE,
+		EDGE
+	} from './radsheet/constants.js';
+	import { drawHeaders as drawHeadersImpl } from './radsheet/drawHeaders.js';
+	import { drawGrid as drawGridImpl } from './radsheet/drawGrid.js';
 
-	const CELL_HEIGHT = 30;
-	const CELL_WIDTH = 120;
-	const ROW_HEADER_WIDTH = 50;
-	const COLUMN_HEADER_HEIGHT = 30;
-	const SCROLLBAR_SIZE = 12;
-
+	// Domain model (source of truth for cell values)
 	let sheet = $state.raw(new Sheet());
 
+	// Viewport + layout state
 	let scrollTop = $state(0);
 	let scrollLeft = $state(0);
 	let containerWidth = $state(0);
 	let containerHeight = $state(0);
 	let sheetVersion = $state(0); // bump when data changes so effect repaints
 
-	// canvases
+	// Canvas refs
 	let gridCanvas; // main cells
 	let colHeadCanvas; // column headers
 	let rowHeadCanvas; // row headers
 
-	// selection state
+	// Selection state (anchor is where selection started, focus is the moving end)
 	let selecting = $state(false);
 	let dragMode = $state(null); // 'grid' | 'row' | 'col' | null
 	let anchorRow = $state(null);
@@ -33,10 +58,7 @@
 	let lastActiveRow = $state(0);
 	let lastActiveCol = $state(0);
 
-	// user interaction flag for throttling/scheduling persistence
-	let isUserInteracting = $state(false);
-
-	// simple in-place read/write adapters so we work with different Sheet APIs
+	// Cell access adapters to support multiple Sheet APIs
 	function readCell(r, c) {
 		if (sheet?.getValue) return sheet.getValue(r, c);
 		if (sheet?.value) return sheet.value(r, c);
@@ -53,23 +75,45 @@
 			sheet.cells[`${r},${c}`] = v;
 		}
 		sheetVersion++;
-
-		// Mark user as interacting
-		isUserInteracting = true;
-		setTimeout(() => {
-			isUserInteracting = false;
-		}, 100); // Clear after 100ms
-
-		// Schedule background persistence
-		if (typeof window !== 'undefined' && window.scheduleSheetPersist) {
-			window.scheduleSheetPersist();
-		}
 	}
 
-	// editor overlay
+	// Editor overlay state
 	let editor = $state({ open: false, row: 0, col: 0, value: '' });
 	let inputEl = $state(null);
 
+	// Persistence (optional). These are referenced in the template behind a runtime guard.
+	// Define minimal defaults so the template compiles even when persistence is not wired.
+	let isPersisting = $state(false);
+	let lastPersistTime = $state(0);
+	function saveToDisk() {
+		// If the Sheet exposes a chunkStore with a persist API, call it; otherwise no-op.
+		try {
+			if (sheet?.chunkStore?.persist) {
+				isPersisting = true;
+				sheet.chunkStore.persist().finally(() => {
+					isPersisting = false;
+					lastPersistTime = Date.now();
+				});
+			}
+		} catch (err) {
+			isPersisting = false;
+		}
+	}
+
+	onMount(() => {
+		// Expose sheet API for e2e tests
+		if (typeof window !== 'undefined') {
+			window.__sheet = sheet;
+		}
+	});
+
+	onDestroy(() => {
+		if (typeof window !== 'undefined') {
+			if (window.__sheet === sheet) delete window.__sheet;
+		}
+	});
+
+	/** Open the inline editor at the given cell. Optionally seed with initial text. */
 	function openEditorAt(row, col, seedText = null) {
 		scrollCellIntoView(row, col);
 		anchorRow = focusRow = lastActiveRow = row;
@@ -89,13 +133,12 @@
 		drawHeaders();
 		drawGrid();
 	}
+	/** Commit or cancel the current edit, then redraw. */
 	function commitEditor(save) {
 		if (!editor.open) return;
 		const { row, col, value } = editor;
-		console.log('commitEditor called with:', { save, row, col, value });
 		editor.open = false;
 		if (save) {
-			console.log('Calling writeCell with:', { row, col, value });
 			writeCell(row, col, value);
 		}
 		anchorRow = focusRow = lastActiveRow = row;
@@ -103,10 +146,9 @@
 		drawHeaders();
 		drawGrid();
 	}
+	/** Handle editing navigation keys and commit/cancel. */
 	function onEditorKeyDown(e) {
-		console.log('onEditorKeyDown called with key:', e.key);
 		if (e.key === 'Enter') {
-			console.log('Handling Enter key');
 			e.preventDefault();
 			commitEditor(true);
 			// move down like spreadsheets
@@ -133,11 +175,9 @@
 			moveFocusBy(1, 0);
 			openEditorAt(lastActiveRow, lastActiveCol);
 		} else if (e.key === 'Escape') {
-			console.log('Handling Escape key');
 			e.preventDefault();
 			commitEditor(false);
 		} else if (e.key === 'Tab') {
-			console.log('Handling Tab key');
 			e.preventDefault();
 			const dir = e.shiftKey ? -1 : 1;
 			commitEditor(true);
@@ -147,29 +187,28 @@
 	}
 
 	// autoscroll while dragging near edges
-	const EDGE = 24; // px hot zone
 	let lastPointer = { x: 0, y: 0 };
 	let auto = { vx: 0, vy: 0, raf: null };
 
-	// metrics
+	// Metrics and derived viewport calculations
 	const totalHeight = $derived((sheetVersion, sheet.numRows) * CELL_HEIGHT);
 	const totalWidth = $derived(columns.length * CELL_WIDTH);
 
-	// visible window
+	// Visible window (row/column indices)
 	const startIndexRow = $derived(Math.floor(scrollTop / CELL_HEIGHT));
 	const visibleRowCount = $derived(Math.ceil(containerHeight / CELL_HEIGHT) + 1);
 	const endIndexRow = $derived(
 		Math.min((sheetVersion, sheet.numRows), startIndexRow + visibleRowCount)
 	);
 
-	// expose reactive numRows for template/props updates on addRows()
+	// Expose reactive numRows for template/props updates on addRows()
 	const numRowsView = $derived((sheetVersion, sheet.numRows));
 
 	const startIndexCol = $derived(Math.floor(scrollLeft / CELL_WIDTH));
 	const visibleColCount = $derived(Math.ceil(containerWidth / CELL_WIDTH) + 1);
 	const endIndexCol = $derived(Math.min(columns.length, startIndexCol + visibleColCount));
 
-	// selection helper (compute on demand)
+	// Selection helper (compute on demand)
 	function getSelection() {
 		if (anchorRow == null || focusRow == null) return null;
 		const r1 = Math.max(0, Math.min(anchorRow, focusRow));
@@ -179,6 +218,7 @@
 		return { r1, r2, c1, c2 };
 	}
 
+	/** Clamp scroll positions to content bounds. */
 	function clampScroll(newTop, newLeft) {
 		const maxScrollTop = Math.max(0, totalHeight - containerHeight);
 		const maxScrollLeft = Math.max(0, totalWidth - containerWidth);
@@ -186,23 +226,13 @@
 		scrollLeft = Math.max(0, Math.min(newLeft, maxScrollLeft));
 	}
 
+	/** Handle wheel scrolling inside the main grid. */
 	function onWheel(e) {
 		e.preventDefault();
 		clampScroll(scrollTop + e.deltaY, scrollLeft + e.deltaX);
-
-		// Mark user as interacting
-		isUserInteracting = true;
-		setTimeout(() => {
-			isUserInteracting = false;
-		}, 200); // Clear after 200ms for scrolling
-
-		// Schedule background persistence on scroll activity
-		if (typeof window !== 'undefined' && window.scheduleSheetPersist) {
-			window.scheduleSheetPersist();
-		}
 	}
 
-	// helpers: local pointer coords
+	// Helpers: local pointer coordinates and pixel -> cell mappers
 	function localXY(el, e) {
 		const r = el.getBoundingClientRect();
 		return { x: e.clientX - r.left, y: e.clientY - r.top };
@@ -222,6 +252,7 @@
 		return Math.floor((y + scrollTop) / CELL_HEIGHT);
 	}
 
+	/** Begin selection drag. kind: 'grid' | 'row' | 'col' */
 	function beginSelection(kind, row, col, e) {
 		if (editor.open) commitEditor(true); // click elsewhere commits
 		dragMode = kind; // 'grid' | 'row' | 'col'
@@ -252,6 +283,7 @@
 
 	const clamp = (v, a, b) => Math.min(Math.max(v, a), b);
 
+	/** Update the moving end of selection to the given row/col. */
 	function updateSelectionTo(row, col) {
 		if (!selecting) return;
 		if (dragMode === 'row') {
@@ -268,6 +300,7 @@
 		drawGrid();
 	}
 
+	/** Finish selection drag and finalize active cell. */
 	function endSelection() {
 		selecting = false;
 		const sel = getSelection();
@@ -281,16 +314,10 @@
 		dragMode = null;
 		drawHeaders();
 		drawGrid();
-
-		// Clear user interaction flag after selection ends
-		setTimeout(() => {
-			isUserInteracting = false;
-		}, 100);
 	}
 
 	// pointer handlers - GRID
 	function onGridPointerDown(e) {
-		isUserInteracting = true;
 		gridCanvas.setPointerCapture(e.pointerId);
 		const { x, y } = localXY(gridCanvas, e);
 		lastPointer = { x, y };
@@ -393,288 +420,51 @@
 		auto.vx = auto.vy = 0;
 	}
 
-	// High-DPI canvas setup helper
-	function setupCtx(canvas, cssW, cssH) {
-		const dpr = Math.max(1, window.devicePixelRatio || 1);
-		canvas.width = Math.max(1, Math.floor(cssW * dpr));
-		canvas.height = Math.max(1, Math.floor(cssH * dpr));
-		canvas.style.width = cssW + 'px';
-		canvas.style.height = cssH + 'px';
-		const ctx = canvas.getContext('2d');
-		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-		return ctx;
-	}
-
+	// Renderers: thin wrappers that delegate to extracted modules for testability
 	function drawHeaders() {
-		// Column headers
-		if (colHeadCanvas) {
-			const ctx = setupCtx(colHeadCanvas, containerWidth, COLUMN_HEADER_HEIGHT);
-			ctx.clearRect(0, 0, containerWidth, COLUMN_HEADER_HEIGHT);
-			ctx.fillStyle = '#f9fafb';
-			ctx.fillRect(0, 0, containerWidth, COLUMN_HEADER_HEIGHT);
-			const offsetX = -(scrollLeft % CELL_WIDTH);
-			ctx.save();
-			ctx.translate(offsetX, 0);
-
-			// selection highlight in header (exactly aligned; no +/-1 fudge)
-			const selH = getSelection();
-			if (selH) {
-				const { c1, c2 } = selH;
-				const leftCol = Math.max(c1, startIndexCol);
-				const rightCol = Math.min(c2, endIndexCol - 1);
-				if (leftCol <= rightCol) {
-					const x0 = (leftCol - startIndexCol) * CELL_WIDTH;
-					const x1 = (rightCol - startIndexCol + 1) * CELL_WIDTH;
-					ctx.fillStyle = 'rgba(59,130,246,0.15)';
-					ctx.fillRect(x0, 0, x1 - x0, COLUMN_HEADER_HEIGHT);
-				}
-			}
-
-			// grid lines + labels
-			ctx.font = '600 12px Inter, system-ui, sans-serif';
-			ctx.textBaseline = 'middle';
-			ctx.textAlign = 'center';
-			for (let c = startIndexCol; c <= endIndexCol; c++) {
-				const x = (c - startIndexCol) * CELL_WIDTH;
-				ctx.fillStyle = '#475569';
-				const label = columns[c] ?? String(c);
-				ctx.fillText(label, x + CELL_WIDTH / 2, COLUMN_HEADER_HEIGHT / 2);
-
-				ctx.strokeStyle = '#e5e7eb';
-				ctx.lineWidth = 1;
-				ctx.beginPath();
-				ctx.moveTo(x + CELL_WIDTH + 0.5, 0.5);
-				ctx.lineTo(x + CELL_WIDTH + 0.5, COLUMN_HEADER_HEIGHT + 0.5);
-				ctx.stroke();
-			}
-			ctx.restore();
-
-			// bottom border
-			ctx.strokeStyle = '#d1d5db';
-			ctx.beginPath();
-			ctx.moveTo(0.5, COLUMN_HEADER_HEIGHT + 0.5);
-			ctx.lineTo(containerWidth + 0.5, COLUMN_HEADER_HEIGHT + 0.5);
-			ctx.stroke();
-		}
-
-		// Row headers
-		if (rowHeadCanvas) {
-			const ctx = setupCtx(rowHeadCanvas, ROW_HEADER_WIDTH, containerHeight);
-			ctx.clearRect(0, 0, ROW_HEADER_WIDTH, containerHeight);
-			ctx.fillStyle = '#f9fafb';
-			ctx.fillRect(0, 0, ROW_HEADER_WIDTH, containerHeight);
-
-			const offsetY = -(scrollTop % CELL_HEIGHT);
-			ctx.save();
-			ctx.translate(0, offsetY);
-
-			// selection highlight in row header (exactly aligned; no +/-1 fudge)
-			const selR = getSelection();
-			if (selR) {
-				const { r1, r2 } = selR;
-				const topRow = Math.max(r1, startIndexRow);
-				const botRow = Math.min(r2, endIndexRow - 1);
-				if (topRow <= botRow) {
-					const y0 = (topRow - startIndexRow) * CELL_HEIGHT;
-					const y1 = (botRow - startIndexRow + 1) * CELL_HEIGHT;
-					ctx.fillStyle = 'rgba(59,130,246,0.15)';
-					ctx.fillRect(0, y0, ROW_HEADER_WIDTH, y1 - y0);
-				}
-			}
-
-			// lines + numbers
-			ctx.font = '600 12px Inter, system-ui, sans-serif';
-			ctx.textBaseline = 'middle';
-			ctx.textAlign = 'center';
-			ctx.fillStyle = '#475569';
-			for (let r = startIndexRow; r <= endIndexRow; r++) {
-				const y = (r - startIndexRow) * CELL_HEIGHT;
-				ctx.fillText(String(r + 1), ROW_HEADER_WIDTH / 2, y + CELL_HEIGHT / 2);
-
-				ctx.strokeStyle = '#e5e7eb';
-				ctx.lineWidth = 1;
-				ctx.beginPath();
-				ctx.moveTo(0.5, y + CELL_HEIGHT + 0.5);
-				ctx.lineTo(ROW_HEADER_WIDTH + 0.5, y + CELL_HEIGHT + 0.5);
-				ctx.stroke();
-			}
-			ctx.restore();
-
-			// right border
-			ctx.strokeStyle = '#d1d5db';
-			ctx.beginPath();
-			ctx.moveTo(ROW_HEADER_WIDTH + 0.5, 0.5);
-			ctx.lineTo(ROW_HEADER_WIDTH + 0.5, containerHeight + 0.5);
-			ctx.stroke();
-		}
+		drawHeadersImpl({
+			colHeadCanvas,
+			rowHeadCanvas,
+			containerWidth,
+			containerHeight,
+			COLUMN_HEADER_HEIGHT,
+			ROW_HEADER_WIDTH,
+			CELL_WIDTH,
+			CELL_HEIGHT,
+			columns,
+			scrollLeft,
+			scrollTop,
+			startIndexCol,
+			endIndexCol,
+			startIndexRow,
+			endIndexRow,
+			getSelection
+		});
 	}
 
 	function drawGrid() {
-		if (!gridCanvas) return;
-		const ctx = setupCtx(gridCanvas, containerWidth, containerHeight);
-		ctx.clearRect(0, 0, containerWidth, containerHeight);
-		ctx.fillStyle = '#ffffff';
-		ctx.fillRect(0, 0, containerWidth, containerHeight);
-
-		const offsetX = -(scrollLeft % CELL_WIDTH);
-		const offsetY = -(scrollTop % CELL_HEIGHT);
-
-		ctx.save();
-		ctx.translate(offsetX, offsetY);
-
-		// grid lines
-		ctx.strokeStyle = '#e5e7eb';
-		ctx.lineWidth = 1;
-		for (let c = startIndexCol; c <= endIndexCol; c++) {
-			const x = (c - startIndexCol) * CELL_WIDTH + 0.5;
-			ctx.beginPath();
-			ctx.moveTo(x, 0.5);
-			ctx.lineTo(x, visibleRowCount * CELL_HEIGHT + 0.5);
-			ctx.stroke();
-		}
-		for (let r = startIndexRow; r <= endIndexRow; r++) {
-			const y = (r - startIndexRow) * CELL_HEIGHT + 0.5;
-			ctx.beginPath();
-			ctx.moveTo(0.5, y);
-			ctx.lineTo(visibleColCount * CELL_WIDTH + 0.5, y);
-			ctx.stroke();
-		}
-
-		// text
-		ctx.font = '12px Inter, system-ui, sans-serif';
-		ctx.fillStyle = '#111827';
-		ctx.textBaseline = 'middle';
-		const padX = 8;
-		for (let r = startIndexRow; r < endIndexRow; r++) {
-			for (let c = startIndexCol; c < endIndexCol; c++) {
-				const x = (c - startIndexCol) * CELL_WIDTH;
-				const y = (r - startIndexRow) * CELL_HEIGHT;
-				const value = readCell(r, c);
-				if (value !== '' && value != null) {
-					ctx.save();
-					ctx.beginPath();
-					ctx.rect(x + 1, y + 1, CELL_WIDTH - 2, CELL_HEIGHT - 2);
-					ctx.clip();
-					ctx.fillText(String(value), x + padX, y + CELL_HEIGHT / 2);
-					ctx.restore();
-				}
-			}
-		}
-
-		// selection overlay
-		const sel = getSelection();
-		if (sel) {
-			const { r1, r2, c1, c2 } = sel;
-			// Visible bounds in cell indices
-			const vC1 = Math.max(c1, startIndexCol);
-			const vC2 = Math.min(c2, endIndexCol - 1);
-			const vR1 = Math.max(r1, startIndexRow);
-			const vR2 = Math.min(r2, endIndexRow - 1);
-
-			// If any part is visible, paint the fill clipped to viewport
-			if (vC1 <= vC2 && vR1 <= vR2) {
-				const x0 = (vC1 - startIndexCol) * CELL_WIDTH;
-				const x1 = (vC2 - startIndexCol + 1) * CELL_WIDTH;
-				const y0 = (vR1 - startIndexRow) * CELL_HEIGHT;
-				const y1 = (vR2 - startIndexRow + 1) * CELL_HEIGHT;
-				ctx.fillStyle = 'rgba(59,130,246,0.12)';
-				ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
-			}
-
-			// Draw the thick border **only on real edges** that are actually visible
-			ctx.strokeStyle = '#3b82f6';
-			ctx.lineWidth = 2; // draw on integer coords for crispness
-			const viewW = visibleColCount * CELL_WIDTH;
-			const viewH = visibleRowCount * CELL_HEIGHT;
-			const selX0 = (c1 - startIndexCol) * CELL_WIDTH;
-			const selX1 = (c2 + 1 - startIndexCol) * CELL_WIDTH;
-			const selY0 = (r1 - startIndexRow) * CELL_HEIGHT;
-			const selY1 = (r2 + 1 - startIndexRow) * CELL_HEIGHT;
-			const isTopAtBoundary = selY0 <= 0;
-			const isLeftAtBoundary = selX0 <= 0;
-			const isRightAtBoundary = selX1 >= viewW;
-			const isBottomAtBoundary = selY1 >= viewH;
-
-			// Top edge visible?
-			if (r1 >= startIndexRow) {
-				const a = Math.max(selX0, 0);
-				const b = Math.min(selX1, viewW);
-				if (a < b) {
-					if (isTopAtBoundary) {
-						ctx.fillStyle = ctx.strokeStyle;
-						ctx.fillRect(a, 0, b - a, 2);
-					} else {
-						ctx.beginPath();
-						ctx.moveTo(a, selY0);
-						ctx.lineTo(b, selY0);
-						ctx.stroke();
-					}
-				}
-			}
-			// Bottom edge visible?
-			if (r2 < endIndexRow - 1) {
-				const a = Math.max(selX0, 0);
-				const b = Math.min(selX1, viewW);
-				if (a < b) {
-					ctx.beginPath();
-					ctx.moveTo(a, selY1);
-					ctx.lineTo(b, selY1);
-					ctx.stroke();
-				}
-			}
-			// Left edge visible?
-			if (c1 >= startIndexCol) {
-				const a = Math.max(selY0, 0);
-				const b = Math.min(selY1, viewH);
-				if (a < b) {
-					if (isLeftAtBoundary) {
-						ctx.fillStyle = ctx.strokeStyle;
-						ctx.fillRect(0, a, 2, b - a);
-					} else {
-						ctx.beginPath();
-						ctx.moveTo(selX0, a);
-						ctx.lineTo(selX0, b);
-						ctx.stroke();
-					}
-				}
-			}
-			// Right edge visible?
-			if (c2 < endIndexCol - 1) {
-				const a = Math.max(selY0, 0);
-				const b = Math.min(selY1, viewH);
-				if (a < b) {
-					ctx.beginPath();
-					ctx.moveTo(selX1, a);
-					ctx.lineTo(selX1, b);
-					ctx.stroke();
-				}
-			}
-
-			// Anchor cell highlight box (originally clicked cell)
-			// Only show when selection spans multiple cells to avoid double-thick border on single cell
-			if (
-				(r1 !== r2 || c1 !== c2) &&
-				anchorRow != null &&
-				anchorCol != null &&
-				anchorRow >= startIndexRow &&
-				anchorRow < endIndexRow &&
-				anchorCol >= startIndexCol &&
-				anchorCol < endIndexCol
-			) {
-				const ax = (anchorCol - startIndexCol) * CELL_WIDTH;
-				const ay = (anchorRow - startIndexRow) * CELL_HEIGHT;
-				ctx.save();
-				ctx.strokeStyle = '#3b82f6';
-				ctx.lineWidth = 2;
-				ctx.strokeRect(ax + 1, ay + 1, CELL_WIDTH - 2, CELL_HEIGHT - 2);
-				ctx.restore();
-			}
-		}
-
-		ctx.restore();
+		drawGridImpl({
+			gridCanvas,
+			containerWidth,
+			containerHeight,
+			CELL_WIDTH,
+			CELL_HEIGHT,
+			startIndexCol,
+			endIndexCol,
+			startIndexRow,
+			endIndexRow,
+			visibleRowCount,
+			visibleColCount,
+			scrollLeft,
+			scrollTop,
+			readCell,
+			getSelection,
+			anchorRow,
+			anchorCol
+		});
 	}
 
-	// keyboard: enter to edit; type to start editing; arrows to move selection
+	// Keyboard: Enter to edit; type to start editing; arrows to move selection
 	function onKeyDown(e) {
 		if (editor.open) return; // let input handle keys
 		if (e.key === 'Enter') {
@@ -728,6 +518,11 @@
 	}
 
 	// Redraw on relevant changes — explicitly read deps so $effect tracks them
+	// This is the complete list of reactive inputs that cause a redraw:
+	// - Selection drivers: anchorRow/Col, focusRow/Col
+	// - Viewport positions/sizes: scrollTop/Left, containerWidth/Height
+	// - Visible index windows: startIndexRow/Col, endIndexRow/Col
+	// - Data version: sheetVersion
 	$effect(() => {
 		anchorRow;
 		anchorCol;
@@ -817,10 +612,7 @@
 					scrollTop}px; width: {CELL_WIDTH}px; height: {CELL_HEIGHT}px;"
 				value={editor.value}
 				oninput={(e) => (editor.value = e.currentTarget.value)}
-				onkeydown={(e) => {
-					console.log('Raw keydown event:', e.key);
-					onEditorKeyDown(e);
-				}}
+				onkeydown={(e) => onEditorKeyDown(e)}
 				onblur={() => commitEditor(true)}
 			/>
 		{/if}

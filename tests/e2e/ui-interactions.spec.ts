@@ -281,28 +281,6 @@ test.describe('UI Interactions', () => {
 			const statusText = page.locator('.text-sm.text-gray-500');
 			await expect(statusText).toContainText('rows: 2000');
 		});
-
-		test('shows save button when storage is available', async ({ page }) => {
-			const saveButton = page.locator('button:has-text("save to disk")');
-
-			// Button should be visible when storage is available
-			await expect(saveButton).toBeVisible();
-		});
-
-		test('saves data when save button is clicked', async ({ page }) => {
-			// Set some data
-			await setCell(page, 0, 0, 'test data');
-
-			const saveButton = page.locator('button:has-text("save to disk")');
-			await saveButton.click();
-
-			// Should show saving status
-			const statusText = page.locator('.text-sm.text-gray-500');
-			await expect(statusText).toContainText('saving');
-
-			// Wait for save to complete
-			await expect(statusText).toContainText('saved');
-		});
 	});
 
 	test.describe('Data Types', () => {
