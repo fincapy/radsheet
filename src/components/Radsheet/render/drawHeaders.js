@@ -1,4 +1,4 @@
-import { setupCanvas2d } from './canvas-utils.js';
+import { setupCanvas2d } from '../canvas-utils.js';
 
 /**
  * Draws the column and row headers, including selection highlights and grid lines.

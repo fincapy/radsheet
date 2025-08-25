@@ -12,10 +12,10 @@
 		SCROLLBAR_SIZE,
 		EDGE
 	} from './constants.js';
-	import { drawHeaders as drawHeadersImpl } from './drawHeaders.js';
-	import { drawGrid as drawGridImpl } from './drawGrid.js';
+	import { drawHeaders as drawHeadersImpl } from './render/drawHeaders.js';
+	import { drawGrid as drawGridImpl } from './render/drawGrid.js';
 	import { setupControllers } from './controllers/setupControllers.js';
-	import { keymap, createKeymapHandler } from './input/keymap.js';
+	import { keymap, createKeymapHandler } from './commands/keymap.js';
 	import { createRenderContext } from './render/createRenderContext.js';
 	import EditorOverlay from '../EditorOverlay.svelte';
 	import { localXY, pointToCell, xToColInHeader, yToRowInHeader } from './math.js';

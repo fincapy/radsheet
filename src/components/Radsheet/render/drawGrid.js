@@ -1,4 +1,4 @@
-import { setupCanvas2d } from './canvas-utils.js';
+import { setupCanvas2d } from '../canvas-utils.js';
 
 /**
  * Draws the main grid: background, grid lines, cell text, and selection overlay.
