@@ -18,9 +18,24 @@ export function createViewportController({ getters, setters }) {
 	}
 
 	/** Handle wheel scrolling inside the main grid. */
+	// Coalesce wheel deltas to one state update per animation frame to reduce jank
+	let __wheelAccumulatedDeltaX = 0;
+	let __wheelAccumulatedDeltaY = 0;
+	let __wheelRafScheduled = false;
 	function onWheel(e) {
 		e.preventDefault();
-		clampScroll(getters.getScrollTop() + e.deltaY, getters.getScrollLeft() + e.deltaX);
+		__wheelAccumulatedDeltaY += e.deltaY;
+		__wheelAccumulatedDeltaX += e.deltaX;
+		if (__wheelRafScheduled) return;
+		__wheelRafScheduled = true;
+		requestAnimationFrame(() => {
+			__wheelRafScheduled = false;
+			const newTop = getters.getScrollTop() + __wheelAccumulatedDeltaY;
+			const newLeft = getters.getScrollLeft() + __wheelAccumulatedDeltaX;
+			__wheelAccumulatedDeltaX = 0;
+			__wheelAccumulatedDeltaY = 0;
+			clampScroll(newTop, newLeft);
+		});
 	}
 
 	function scrollCellIntoView(r, c) {

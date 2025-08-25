@@ -34,6 +34,15 @@ export function createDoubleClickController({ getters, methods, controllers, ref
 					return;
 				}
 			}
+			// If on row header near an edge, auto-fit that row
+			if (target === refs.getRowHeadCanvas()) {
+				const { y } = methods.localXY(target, e);
+				const hitRow = methods.getRowEdgeNearY ? methods.getRowEdgeNearY(y, 5) : null;
+				if (hitRow != null && methods.autoFitRow) {
+					methods.autoFitRow(hitRow);
+					return;
+				}
+			}
 			if (!controllers.editor.isEditorOpen()) {
 				controllers.editor.openEditorAt(getters.getLastActiveRow(), getters.getLastActiveCol());
 			}

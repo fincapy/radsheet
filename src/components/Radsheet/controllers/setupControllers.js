@@ -133,7 +133,10 @@ export function setupControllers({
 			getColEdgeNearX: methods.getColEdgeNearX,
 			setColumnWidth: methods.setColumnWidth,
 			getColLeft: methods.getColLeft,
-			setHoverResizeCol: methods.setHoverResizeCol
+			setHoverResizeCol: methods.setHoverResizeCol,
+			getRowEdgeNearY: methods.getRowEdgeNearY,
+			setRowHeight: methods.setRowHeight,
+			getRowTop: methods.getRowTop
 		},
 		refs,
 		constants
@@ -148,7 +151,9 @@ export function setupControllers({
 			localXY: methods.localXY,
 			pointToCell: methods.pointToCell,
 			getColEdgeNearX: methods.getColEdgeNearX,
-			autoFitColumn: methods.autoFitColumn
+			autoFitColumn: methods.autoFitColumn,
+			getRowEdgeNearY: methods.getRowEdgeNearY,
+			autoFitRow: methods.autoFitRow
 		},
 		controllers: { editor },
 		refs

@@ -99,24 +99,59 @@
 	function getColWidth(c) {
 		return colWidths[c] ?? CELL_WIDTH;
 	}
+	// Sparse Fenwick tree for cumulative adjustments relative to defaults
+	class SparseFenwick {
+		constructor() {
+			this.tree = new Map();
+			this.maxIndex = 0;
+		}
+		setMax(n) {
+			if (n > this.maxIndex) this.maxIndex = n;
+		}
+		add(indexOneBased, delta) {
+			for (let i = indexOneBased; i <= this.maxIndex; i += i & -i) {
+				this.tree.set(i, (this.tree.get(i) || 0) + delta);
+			}
+		}
+		sum(countOneBased) {
+			let res = 0;
+			for (let i = countOneBased; i > 0; i -= i & -i) {
+				res += this.tree.get(i) || 0;
+			}
+			return res;
+		}
+	}
+
+	const colFenwick = new SparseFenwick();
+	const rowFenwick = new SparseFenwick();
+	// initialize capacities
+	colFenwick.setMax(columns.length);
+
 	function setColumnWidth(c, w) {
-		colWidths[c] = Math.max(MIN_COL_WIDTH, Math.round(w));
-		scheduleRender();
+		const clamped = Math.max(MIN_COL_WIDTH, Math.round(w));
+		const prev = getColWidth(c);
+		if (clamped !== prev) {
+			colWidths[c] = clamped;
+			// update cumulative adjustment relative to default width
+			colFenwick.add(c + 1, clamped - prev);
+			scheduleRender();
+		}
 	}
 	function colLeft(c) {
-		let x = 0;
-		for (let i = 0; i < c; i++) x += getColWidth(i);
-		return x;
+		// left of column c = base default + cumulative adjustments for 0..c-1
+		return c * CELL_WIDTH + colFenwick.sum(c);
 	}
 	function xToColVariable(x) {
 		const target = x + scrollLeft;
-		let acc = 0;
-		for (let c = 0; c < columns.length; c++) {
-			const w = getColWidth(c);
-			if (acc + w > target) return c;
-			acc += w;
+		let lo = 0;
+		let hi = columns.length;
+		while (lo < hi) {
+			const mid = (lo + hi) >> 1;
+			const rightEdge = (mid + 1) * CELL_WIDTH + colFenwick.sum(mid + 1);
+			if (rightEdge > target) hi = mid;
+			else lo = mid + 1;
 		}
-		return columns.length - 1;
+		return Math.max(0, Math.min(columns.length - 1, lo));
 	}
 	function pointToCellVariable(x, y) {
 		const col = xToColVariable(x);
@@ -152,16 +187,98 @@
 	}
 	function autoFitColumn(colIndex) {
 		const padX = 8;
-		let maxW = measureText(columns[colIndex] ?? String(colIndex), { bold: true }) + padX * 2;
+		let foundContent = false;
+		let maxW = 0; // if no content stays 0 => snap to default
 		const maxRowsToScan = Math.min(sheet.numRows, 1000);
 		for (let r = 0; r < maxRowsToScan; r++) {
 			const v = readCell(r, colIndex);
 			if (v !== '' && v != null) {
+				foundContent = true;
 				const w = measureText(v, { bold: false }) + padX * 2;
 				if (w > maxW) maxW = w;
 			}
 		}
+		if (!foundContent) {
+			setColumnWidth(colIndex, CELL_WIDTH); // snap back to default when empty
+			return;
+		}
 		setColumnWidth(colIndex, Math.max(MIN_COL_WIDTH, Math.ceil(maxW)));
+	}
+
+	// Row heights and helpers (variable heights)
+	let rowHeights = $state([]);
+	const MIN_ROW_HEIGHT = 18;
+	function getRowHeight(r) {
+		return rowHeights[r] ?? CELL_HEIGHT;
+	}
+	function setRowHeight(r, h) {
+		const clamped = Math.max(MIN_ROW_HEIGHT, Math.round(h));
+		const prev = getRowHeight(r);
+		if (clamped !== prev) {
+			rowHeights[r] = clamped;
+			// update cumulative adjustment relative to default height
+			rowFenwick.add(r + 1, clamped - prev);
+			scheduleRender();
+		}
+	}
+	function rowTop(r) {
+		// top of row r = base default + cumulative adjustments for rows < r
+		const rClamped = Math.max(0, Math.min(r, sheet.numRows));
+		return rClamped * CELL_HEIGHT + rowFenwick.sum(rClamped);
+	}
+	function yToRowVariable(y) {
+		const target = y + scrollTop;
+		let lo = 0;
+		let hi = sheet.numRows;
+		while (lo < hi) {
+			const mid = (lo + hi) >> 1;
+			const rightEdge = (mid + 1) * CELL_HEIGHT + rowFenwick.sum(mid + 1);
+			if (rightEdge > target) hi = mid;
+			else lo = mid + 1;
+		}
+		return Math.max(0, Math.min(sheet.numRows - 1, lo));
+	}
+
+	// Keep Fenwick capacities in sync with dynamic sizes
+	$effect(() => {
+		// react to changes
+		columns;
+		sheet.numRows;
+		colFenwick.setMax(columns.length);
+		rowFenwick.setMax(sheet.numRows);
+	});
+	function getRowEdgeNearY(y, threshold = 5) {
+		let acc = 0;
+		for (let r = 0; r < sheet.numRows; r++) {
+			const h = getRowHeight(r);
+			const edgeAbs = acc + h;
+			const edgeLocal = edgeAbs - scrollTop;
+			if (Math.abs(edgeLocal - y) <= threshold) return r;
+			acc = edgeAbs;
+		}
+		return null;
+	}
+
+	function autoFitRow(rowIndex) {
+		const padY = 6;
+		let maxLines = 0; // 0 means empty -> snap to default height
+		let hasContent = false;
+		const maxColsToScan = Math.min(columns.length, 200);
+		for (let c = 0; c < maxColsToScan; c++) {
+			const v = readCell(rowIndex, c);
+			if (v != null && v !== '') {
+				hasContent = true;
+				const lines = String(v).split('\n').length;
+				if (lines > maxLines) maxLines = lines;
+			}
+		}
+		if (!hasContent) {
+			setRowHeight(rowIndex, CELL_HEIGHT); // snap back to default height when empty
+			return;
+		}
+		const lineHeight = 14;
+		const needed = Math.max(MIN_ROW_HEIGHT, Math.ceil(maxLines * lineHeight + padY));
+		setRowHeight(rowIndex, needed);
 	}
 
 	// Hover UI state for resize affordance
@@ -172,59 +289,92 @@
 		scheduleRender();
 	};
 
+	// Hover UI state for row resize affordance
+	let hoverResizeRow = $state(null);
+	const getHoverResizeRow = () => hoverResizeRow;
+	const setHoverResizeRow = (idx) => {
+		hoverResizeRow = typeof idx === 'number' ? idx : null;
+		scheduleRender();
+	};
+
 	// Metrics and derived viewport calculations
-	const totalHeight = $derived((sheetVersion, sheet.numRows) * CELL_HEIGHT);
+	const totalHeight = $derived(
+		(() => {
+			rowHeights;
+			// default total + cumulative adjustments
+			return sheet.numRows * CELL_HEIGHT + rowFenwick.sum(sheet.numRows);
+		})()
+	);
 	const totalWidth = $derived(
 		(() => {
 			colWidths;
-			let sum = 0;
-			for (let i = 0; i < columns.length; i++) sum += getColWidth(i);
-			return sum;
+			return columns.length * CELL_WIDTH + colFenwick.sum(columns.length);
 		})()
 	);
 
 	// Visible window (row/column indices)
-	const startIndexRow = $derived(Math.floor(scrollTop / CELL_HEIGHT));
-	const visibleRowCount = $derived(Math.ceil(containerHeight / CELL_HEIGHT) + 1);
-	const endIndexRow = $derived(
-		Math.min((sheetVersion, sheet.numRows), startIndexRow + visibleRowCount)
+	const startIndexRow = $derived(
+		(() => {
+			rowHeights;
+			let lo = 0;
+			let hi = sheet.numRows;
+			const target = scrollTop;
+			while (lo < hi) {
+				const mid = (lo + hi) >> 1;
+				const rightEdge = (mid + 1) * CELL_HEIGHT + rowFenwick.sum(mid + 1);
+				if (rightEdge > target) hi = mid;
+				else lo = mid + 1;
+			}
+			return Math.max(0, Math.min(sheet.numRows, lo));
+		})()
 	);
+	const endIndexRow = $derived(
+		(() => {
+			rowHeights;
+			const target = scrollTop + containerHeight;
+			let lo = 0;
+			let hi = sheet.numRows;
+			while (lo < hi) {
+				const mid = (lo + hi) >> 1;
+				const topAtMid = mid * CELL_HEIGHT + rowFenwick.sum(mid);
+				if (topAtMid >= target) hi = mid;
+				else lo = mid + 1;
+			}
+			return Math.max(0, Math.min(sheet.numRows, lo));
+		})()
+	);
+	const visibleRowCount = $derived(endIndexRow - startIndexRow);
 
 	// Expose reactive numRows for template/props updates on addRows()
 	const numRowsView = $derived((sheetVersion, sheet.numRows));
 	const startIndexCol = $derived(
 		(() => {
 			colWidths;
-			let acc = 0;
-			for (let c = 0; c < columns.length; c++) {
-				const w = getColWidth(c);
-				if (acc + w > scrollLeft) return c;
-				acc += w;
+			let lo = 0;
+			let hi = columns.length;
+			const target = scrollLeft;
+			while (lo < hi) {
+				const mid = (lo + hi) >> 1;
+				const rightEdge = (mid + 1) * CELL_WIDTH + colFenwick.sum(mid + 1);
+				if (rightEdge > target) hi = mid;
+				else lo = mid + 1;
 			}
-			return columns.length;
+			return Math.max(0, Math.min(columns.length, lo));
 		})()
 	);
 	const endIndexCol = $derived(
 		(() => {
 			colWidths;
-			let left = 0;
-			let start = 0;
-			for (let c = 0; c < columns.length; c++) {
-				const w = getColWidth(c);
-				if (left + w > scrollLeft) {
-					start = c;
-					break;
-				}
-				left += w;
+			const target = scrollLeft + containerWidth;
+			let lo = 0;
+			let hi = columns.length;
+			while (lo < hi) {
+				const mid = (lo + hi) >> 1;
+				const leftAtMid = mid * CELL_WIDTH + colFenwick.sum(mid);
+				if (leftAtMid >= target) hi = mid;
+				else lo = mid + 1;
 			}
-			let x = left;
-			let end = start;
-			for (let c = start; c < columns.length; c++) {
-				x += getColWidth(c);
-				end = c + 1;
-				if (x >= scrollLeft + containerWidth) break;
-			}
-			return Math.min(end, columns.length);
+			return Math.max(0, Math.min(columns.length, lo));
 		})()
 	);
 	const visibleColCount = $derived(endIndexCol - startIndexCol);
@@ -299,13 +449,17 @@
 			drawHeaders: () => drawHeaders(),
 			drawGrid: () => drawGrid(),
 			localXY: (el, e) => localXY(el, e),
-			pointToCell: (x, y) => pointToCellVariable(x, y),
+			pointToCell: (x, y) => ({ col: xToColVariable(x), row: yToRowVariable(y) }),
 			xToColInHeader: (x) => xToColVariable(x),
 			getColEdgeNearX: (x, threshold) => getColEdgeNearX(x, threshold),
 			setColumnWidth: (idx, w) => setColumnWidth(idx, w),
 			autoFitColumn: (idx) => autoFitColumn(idx),
 			getColLeft: (c) => colLeft(c),
-			yToRowInHeader: (y) => yToRowInHeader(y, scrollTop, CELL_HEIGHT),
+			yToRowInHeader: (y) => yToRowVariable(y),
+			getRowEdgeNearY: (y, threshold) => getRowEdgeNearY(y, threshold),
+			setRowHeight: (r, h) => setRowHeight(r, h),
+			autoFitRow: (r) => autoFitRow(r),
+			getRowTop: (r) => rowTop(r),
 			setHoverResizeCol: (idx) => setHoverResizeCol(idx)
 		},
 		refs: {
@@ -439,7 +593,10 @@
 			isSelectionCopied: () => isSelectionCopied,
 			getColWidth: (c) => getColWidth(c),
 			colLeft: (c) => colLeft(c),
-			getHoverResizeCol: () => hoverResizeCol
+			getHoverResizeCol: () => hoverResizeCol,
+			getRowHeight: (r) => getRowHeight(r),
+			rowTop: (r) => rowTop(r),
+			getHoverResizeRow: () => hoverResizeRow
 		});
 
 		// Ensure first paint happens after render context is ready
@@ -491,6 +648,7 @@
 			onpointerdown={drag.onRowHeadPointerDown}
 			onpointermove={drag.onRowHeadPointerMove}
 			onpointerup={drag.onRowHeadPointerUp}
+			onpointerleave={drag.onRowHeadPointerLeave}
 			ondblclick={dbl.onAnyDblClick}
 			style="width:{ROW_HEADER_WIDTH}px; height:100%;"
 		></canvas>
@@ -523,6 +681,8 @@
 			{scrollTop}
 			getColLeft={(c) => colLeft(c)}
 			getColWidth={(c) => getColWidth(c)}
+			getRowTop={(r) => rowTop(r)}
+			getRowHeight={(r) => getRowHeight(r)}
 		/>
 	</div>
 

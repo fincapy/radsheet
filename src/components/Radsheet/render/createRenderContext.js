@@ -24,7 +24,9 @@ export function createRenderContext(env) {
 				anchorCol: env.anchorCol(),
 				isSelectionCopied: env.isSelectionCopied(),
 				getColWidth: env.getColWidth,
-				colLeft: env.colLeft
+				colLeft: env.colLeft,
+				getRowHeight: env.getRowHeight,
+				rowTop: env.rowTop
 			};
 		},
 		getHeaderParams() {
@@ -47,7 +49,10 @@ export function createRenderContext(env) {
 				getSelection: env.getSelection,
 				getColWidth: env.getColWidth,
 				colLeft: env.colLeft,
-				getHoverResizeCol: env.getHoverResizeCol
+				getHoverResizeCol: env.getHoverResizeCol,
+				getRowHeight: env.getRowHeight,
+				rowTop: env.rowTop,
+				getHoverResizeRow: env.getHoverResizeRow
 			};
 		}
 	};

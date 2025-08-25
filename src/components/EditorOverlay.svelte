@@ -7,7 +7,9 @@
 		scrollLeft,
 		scrollTop,
 		getColLeft,
-		getColWidth
+		getColWidth,
+		getRowTop,
+		getRowHeight
 	} = $props();
 
 	let inputEl = $state(null);
@@ -31,9 +33,11 @@
 		class="editor absolute z-20 border-2 border-blue-500 bg-white px-2 text-sm outline-none"
 		bind:this={inputEl}
 		style="left: {(getColLeft ? getColLeft(editorState.col) : editorState.col * CELL_WIDTH) -
-			scrollLeft}px; top: {editorState.row * CELL_HEIGHT - scrollTop}px; width: {getColWidth
+			scrollLeft}px; top: {(getRowTop
+			? getRowTop(editorState.row)
+			: editorState.row * CELL_HEIGHT) - scrollTop}px; width: {getColWidth
 			? getColWidth(editorState.col)
-			: CELL_WIDTH}px; height: {CELL_HEIGHT}px;"
+			: CELL_WIDTH}px; height: {getRowHeight ? getRowHeight(editorState.row) : CELL_HEIGHT}px;"
 		value={editorState.value}
 		oninput={(e) =>
 			commandBus.dispatch({ type: 'UpdateEditorValue', payload: { value: e.currentTarget.value } })}

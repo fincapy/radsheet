@@ -6,6 +6,7 @@ export function createDragSelectionController({ getters, setters, methods, refs,
 	let lastPointer = { x: 0, y: 0 };
 	let auto = { vx: 0, vy: 0, raf: null };
 	let resizing = { active: false, colIndex: -1, startX: 0, startWidth: 0 };
+	let rowResizing = { active: false, rowIndex: -1, startY: 0, startHeight: 0 };
 
 	function beginSelection(kind, row, col, e) {
 		if (methods.isEditorOpen()) methods.commitEditor(true);
@@ -190,21 +191,54 @@ export function createDragSelectionController({ getters, setters, methods, refs,
 		canvas.setPointerCapture(e.pointerId);
 		const { y } = methods.localXY(canvas, e);
 		lastPointer = { x: 0, y };
+		// Check resize hotspot near bottom edge
+		const hitRow = methods.getRowEdgeNearY ? methods.getRowEdgeNearY(y, 5) : null;
+		if (hitRow != null) {
+			rowResizing = {
+				active: true,
+				rowIndex: hitRow,
+				startY: y,
+				startHeight: methods.getRowTop(hitRow + 1) - methods.getRowTop(hitRow)
+			};
+			if (canvas && canvas.style) canvas.style.cursor = 'row-resize';
+			return;
+		}
 		const row = methods.yToRowInHeader(y);
 		beginSelection('row', row, 0, e);
 	}
 	function onRowHeadPointerMove(e) {
-		if (!getters.getSelecting()) return;
 		const canvas = refs.getRowHeadCanvas();
 		const { y } = methods.localXY(canvas, e);
 		lastPointer = { x: 0, y };
+		if (!getters.getSelecting() && !rowResizing.active) {
+			const hit = methods.getRowEdgeNearY ? methods.getRowEdgeNearY(y, 5) : null;
+			if (canvas && canvas.style) canvas.style.cursor = hit != null ? 'row-resize' : 'default';
+		}
+		if (rowResizing.active) {
+			const dy = y - rowResizing.startY;
+			methods.setRowHeight(rowResizing.rowIndex, Math.max(18, rowResizing.startHeight + dy));
+			methods.drawHeaders();
+			methods.drawGrid();
+			return;
+		}
+		if (!getters.getSelecting()) return;
 		updateSelectionTo(methods.yToRowInHeader(y), 0);
 		updateAutoScroll(0, y);
 	}
 	function onRowHeadPointerUp(e) {
 		const canvas = refs.getRowHeadCanvas();
 		canvas.releasePointerCapture(e.pointerId);
+		if (rowResizing.active) {
+			rowResizing = { active: false, rowIndex: -1, startY: 0, startHeight: 0 };
+			if (canvas && canvas.style) canvas.style.cursor = 'default';
+			return;
+		}
 		endSelection();
+	}
+
+	function onRowHeadPointerLeave() {
+		const canvas = refs.getRowHeadCanvas();
+		if (canvas && canvas.style) canvas.style.cursor = 'default';
 	}
 
 	return {
@@ -220,6 +254,7 @@ export function createDragSelectionController({ getters, setters, methods, refs,
 		onColHeadPointerLeave,
 		onRowHeadPointerDown,
 		onRowHeadPointerMove,
-		onRowHeadPointerUp
+		onRowHeadPointerUp,
+		onRowHeadPointerLeave
 	};
 }

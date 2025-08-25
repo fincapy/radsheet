@@ -26,7 +26,10 @@ export function drawHeaders(opts) {
 		getSelection,
 		getColWidth,
 		colLeft,
-		getHoverResizeCol
+		getHoverResizeCol,
+		getRowHeight,
+		rowTop,
+		getHoverResizeRow
 	} = opts;
 
 	// Column headers
@@ -35,8 +38,8 @@ export function drawHeaders(opts) {
 		ctx.clearRect(0, 0, containerWidth, COLUMN_HEADER_HEIGHT);
 		ctx.fillStyle = '#f9fafb';
 		ctx.fillRect(0, 0, containerWidth, COLUMN_HEADER_HEIGHT);
-		const firstLeft = colLeft ? colLeft(startIndexCol) : startIndexCol * CELL_WIDTH;
-		const offsetX = firstLeft - scrollLeft;
+		const baseLeft = colLeft ? colLeft(startIndexCol) : startIndexCol * CELL_WIDTH;
+		const offsetX = baseLeft - scrollLeft;
 		ctx.save();
 		ctx.translate(offsetX, 0);
 
@@ -47,12 +50,11 @@ export function drawHeaders(opts) {
 			const leftCol = Math.max(c1, startIndexCol);
 			const rightCol = Math.min(c2, endIndexCol - 1);
 			if (leftCol <= rightCol) {
-				const base = colLeft ? colLeft(startIndexCol) : startIndexCol * CELL_WIDTH;
-				const x0 = (colLeft ? colLeft(leftCol) : leftCol * CELL_WIDTH) - base;
+				const x0 = (colLeft ? colLeft(leftCol) : leftCol * CELL_WIDTH) - baseLeft;
 				const x1 =
 					(colLeft
 						? colLeft(rightCol) + (getColWidth ? getColWidth(rightCol) : CELL_WIDTH)
-						: (rightCol + 1) * CELL_WIDTH) - base;
+						: (rightCol + 1) * CELL_WIDTH) - baseLeft;
 				ctx.fillStyle = 'rgba(59,130,246,0.15)';
 				ctx.fillRect(x0, 0, x1 - x0, COLUMN_HEADER_HEIGHT);
 			}
@@ -63,8 +65,7 @@ export function drawHeaders(opts) {
 		ctx.textBaseline = 'middle';
 		ctx.textAlign = 'center';
 		for (let c = startIndexCol; c < endIndexCol; c++) {
-			const base = colLeft ? colLeft(startIndexCol) : startIndexCol * CELL_WIDTH;
-			const x = (colLeft ? colLeft(c) : c * CELL_WIDTH) - base;
+			const x = (colLeft ? colLeft(c) : c * CELL_WIDTH) - baseLeft;
 			const w = getColWidth ? getColWidth(c) : CELL_WIDTH;
 			ctx.fillStyle = '#475569';
 			const label = columns[c] ?? String(c);
@@ -120,7 +121,8 @@ export function drawHeaders(opts) {
 		ctx.fillStyle = '#f9fafb';
 		ctx.fillRect(0, 0, ROW_HEADER_WIDTH, containerHeight);
 
-		const offsetY = -(scrollTop % CELL_HEIGHT);
+		const firstTop = rowTop ? rowTop(startIndexRow) : startIndexRow * CELL_HEIGHT;
+		const offsetY = firstTop - scrollTop;
 		ctx.save();
 		ctx.translate(0, offsetY);
 
@@ -131,8 +133,12 @@ export function drawHeaders(opts) {
 			const topRow = Math.max(r1, startIndexRow);
 			const botRow = Math.min(r2, endIndexRow - 1);
 			if (topRow <= botRow) {
-				const y0 = (topRow - startIndexRow) * CELL_HEIGHT;
-				const y1 = (botRow - startIndexRow + 1) * CELL_HEIGHT;
+				const baseY = rowTop ? rowTop(startIndexRow) : startIndexRow * CELL_HEIGHT;
+				const y0 = (rowTop ? rowTop(topRow) : topRow * CELL_HEIGHT) - baseY;
+				const y1 =
+					(rowTop
+						? rowTop(botRow) + (getRowHeight ? getRowHeight(botRow) : CELL_HEIGHT)
+						: (botRow + 1) * CELL_HEIGHT) - baseY;
 				ctx.fillStyle = 'rgba(59,130,246,0.15)';
 				ctx.fillRect(0, y0, ROW_HEADER_WIDTH, y1 - y0);
 			}
@@ -144,17 +150,51 @@ export function drawHeaders(opts) {
 		ctx.textAlign = 'center';
 		ctx.fillStyle = '#475569';
 		for (let r = startIndexRow; r < endIndexRow; r++) {
-			const y = (r - startIndexRow) * CELL_HEIGHT;
-			ctx.fillText(String(r + 1), ROW_HEADER_WIDTH / 2, y + CELL_HEIGHT / 2);
+			const baseY = rowTop ? rowTop(startIndexRow) : startIndexRow * CELL_HEIGHT;
+			const y = (rowTop ? rowTop(r) : r * CELL_HEIGHT) - baseY;
+			ctx.fillText(
+				String(r + 1),
+				ROW_HEADER_WIDTH / 2,
+				y + (getRowHeight ? getRowHeight(r) : CELL_HEIGHT) / 2
+			);
 
 			ctx.strokeStyle = '#e5e7eb';
 			ctx.lineWidth = 1;
 			ctx.beginPath();
-			ctx.moveTo(0.5, y + CELL_HEIGHT + 0.5);
-			ctx.lineTo(ROW_HEADER_WIDTH + 0.5, y + CELL_HEIGHT + 0.5);
+			const rh = getRowHeight ? getRowHeight(r) : CELL_HEIGHT;
+			ctx.moveTo(0.5, y + rh + 0.5);
+			ctx.lineTo(ROW_HEADER_WIDTH + 0.5, y + rh + 0.5);
 			ctx.stroke();
 		}
 		ctx.restore();
+
+		// Hover resize indicator (subtle) on the row edge under cursor
+		const hoverRow = getHoverResizeRow ? getHoverResizeRow() : null;
+		if (hoverRow != null && hoverRow >= startIndexRow && hoverRow < endIndexRow) {
+			const baseY = rowTop ? rowTop(startIndexRow) : startIndexRow * CELL_HEIGHT;
+			const yEdge =
+				(rowTop
+					? rowTop(hoverRow) + (getRowHeight ? getRowHeight(hoverRow) : CELL_HEIGHT)
+					: (hoverRow + 1) * CELL_HEIGHT) - baseY;
+			ctx.save();
+			const xLeft = 4.5;
+			const xRight = ROW_HEADER_WIDTH - 4.5;
+			// soft glow
+			ctx.strokeStyle = 'rgba(59,130,246,0.12)';
+			ctx.lineWidth = 6;
+			ctx.beginPath();
+			ctx.moveTo(xLeft, yEdge + 0.5);
+			ctx.lineTo(xRight, yEdge + 0.5);
+			ctx.stroke();
+			// crisp center line
+			ctx.strokeStyle = '#3b82f6';
+			ctx.lineWidth = 1.5;
+			ctx.beginPath();
+			ctx.moveTo(xLeft, yEdge + 0.5);
+			ctx.lineTo(xRight, yEdge + 0.5);
+			ctx.stroke();
+			ctx.restore();
+		}
 
 		// right border
 		ctx.strokeStyle = '#d1d5db';
