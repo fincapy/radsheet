@@ -7,10 +7,8 @@
 	let dragStartScrollLeft = 0;
 
 	const scrollbarVisible = $derived(totalWidth > containerWidth);
-	// Fall back to containerWidth in environments where clientWidth is 0 (e.g., JSDOM)
-	const trackWidth = $derived(
-		trackElement && trackElement.clientWidth > 0 ? trackElement.clientWidth : containerWidth
-	);
+	const trackWidth = $derived(containerWidth - 24);
+
 	const thumbWidth = $derived(
 		scrollbarVisible ? Math.max(20, (containerWidth / totalWidth) * trackWidth) : 0
 	);

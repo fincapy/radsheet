@@ -54,7 +54,7 @@ export function drawHeaders(opts) {
 		ctx.font = '600 12px Inter, system-ui, sans-serif';
 		ctx.textBaseline = 'middle';
 		ctx.textAlign = 'center';
-		for (let c = startIndexCol; c <= endIndexCol; c++) {
+		for (let c = startIndexCol; c < endIndexCol; c++) {
 			const x = (c - startIndexCol) * CELL_WIDTH;
 			ctx.fillStyle = '#475569';
 			const label = columns[c] ?? String(c);
@@ -107,7 +107,7 @@ export function drawHeaders(opts) {
 		ctx.textBaseline = 'middle';
 		ctx.textAlign = 'center';
 		ctx.fillStyle = '#475569';
-		for (let r = startIndexRow; r <= endIndexRow; r++) {
+		for (let r = startIndexRow; r < endIndexRow; r++) {
 			const y = (r - startIndexRow) * CELL_HEIGHT;
 			ctx.fillText(String(r + 1), ROW_HEADER_WIDTH / 2, y + CELL_HEIGHT / 2);
 

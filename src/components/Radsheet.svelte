@@ -47,6 +47,7 @@
 	let gridCanvas; // main cells
 	let colHeadCanvas; // column headers
 	let rowHeadCanvas; // row headers
+	let gridContainerEl; // container element for main grid area
 
 	// Selection state (anchor is where selection started, focus is the moving end)
 	let selecting = $state(false);
@@ -105,6 +106,28 @@
 		if (typeof window !== 'undefined') {
 			window.__sheet = sheet;
 		}
+
+		// Set up resize observer to fix overdrawing issues on container resize
+		const resizeObserver = new ResizeObserver((entries) => {
+			for (let entry of entries) {
+				if (scrollLeft > 1 && scrollTop > 1) {
+					clampScroll(scrollTop - 1, scrollLeft - 1);
+				} else if (scrollLeft > 1) {
+					clampScroll(scrollTop, scrollLeft - 1);
+				} else if (scrollTop > 1) {
+					clampScroll(scrollTop - 1, scrollLeft);
+				}
+			}
+		});
+
+		// Observe the grid container element
+		if (gridContainerEl) {
+			resizeObserver.observe(gridContainerEl);
+		}
+
+		return () => {
+			resizeObserver.disconnect();
+		};
 	});
 
 	onDestroy(() => {
@@ -566,7 +589,6 @@
 			onpointerup={onColHeadPointerUp}
 			ondblclick={handleAnyDblClick}
 			style="height: {COLUMN_HEADER_HEIGHT}px; width: 100%;"
-			bind:clientWidth={containerWidth}
 		></canvas>
 	</div>
 
@@ -583,7 +605,6 @@
 			onpointerup={onRowHeadPointerUp}
 			ondblclick={handleAnyDblClick}
 			style="width:{ROW_HEADER_WIDTH}px; height:100%;"
-			bind:clientHeight={containerHeight}
 		></canvas>
 	</div>
 
@@ -591,6 +612,7 @@
 	<div
 		class="relative overflow-hidden"
 		onwheel={onWheel}
+		bind:this={gridContainerEl}
 		bind:clientHeight={containerHeight}
 		bind:clientWidth={containerWidth}
 	>

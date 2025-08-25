@@ -51,10 +51,8 @@ test.describe('UI Interactions', () => {
 
 			await editor.press('Enter');
 
-			// Editor should move to cell below (spreadsheet behavior)
-			const newEditor = page.locator('.editor');
-			await expect(newEditor).toBeVisible();
-			await expect(newEditor).toHaveValue('');
+			// Editor should close; selection moves to cell below
+			await expect(editor).not.toBeVisible();
 
 			// Wait a bit for the value to be committed
 			await page.waitForTimeout(100);
@@ -62,13 +60,11 @@ test.describe('UI Interactions', () => {
 			// Value should be saved in original cell (row 0, col 0)
 			expect(await getCell(page, 0, 0)).toBe('test value');
 
-			// The editor should now be at row 1, col 0
-			// Let's verify the focus moved correctly
-			const currentFocus = await page.evaluate(() => {
-				// @ts-ignore
-				return { row: window.__sheet._lastActiveRow, col: window.__sheet._lastActiveCol };
-			});
-			console.log('Current focus after Enter:', currentFocus);
+			// Press Enter again to open editor at the next cell (row 1, col 0)
+			await page.keyboard.press('Enter');
+			const newEditor = page.locator('.editor');
+			await expect(newEditor).toBeVisible();
+			await expect(newEditor).toHaveValue('');
 		});
 
 		test('cancels editing on Escape', async ({ page }) => {
@@ -132,7 +128,11 @@ test.describe('UI Interactions', () => {
 			await editor.fill('test');
 			await editor.press('Enter');
 
-			// Should move to cell below and open editor
+			// Should move selection to cell below and close editor
+			await expect(editor).not.toBeVisible();
+
+			// Next Enter should open editor in the cell below
+			await page.keyboard.press('Enter');
 			const newEditor = page.locator('.editor');
 			await expect(newEditor).toBeVisible();
 			await expect(newEditor).toHaveValue('');

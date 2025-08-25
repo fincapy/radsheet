@@ -8,9 +8,7 @@
 
 	const scrollbarVisible = $derived(totalHeight > viewportHeight);
 	// Fall back to viewportHeight in environments where clientHeight is 0 (e.g., JSDOM)
-	const trackHeight = $derived(
-		trackElement && trackElement.clientHeight > 0 ? trackElement.clientHeight : viewportHeight
-	);
+	const trackHeight = $derived(viewportHeight - 23);
 	const thumbHeight = $derived(
 		scrollbarVisible ? Math.max(20, (viewportHeight / totalHeight) * trackHeight) : 0
 	);
