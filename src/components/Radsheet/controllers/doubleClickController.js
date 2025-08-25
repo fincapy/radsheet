@@ -25,6 +25,15 @@ export function createDoubleClickController({ getters, methods, controllers, ref
 			typeof target.tagName === 'string' &&
 			target.tagName.toLowerCase() === 'canvas'
 		) {
+			// If on column header near an edge, auto-fit that column
+			if (target === refs.getColHeadCanvas()) {
+				const { x } = methods.localXY(target, e);
+				const hitCol = methods.getColEdgeNearX ? methods.getColEdgeNearX(x, 5) : null;
+				if (hitCol != null && methods.autoFitColumn) {
+					methods.autoFitColumn(hitCol);
+					return;
+				}
+			}
 			if (!controllers.editor.isEditorOpen()) {
 				controllers.editor.openEditorAt(getters.getLastActiveRow(), getters.getLastActiveCol());
 			}

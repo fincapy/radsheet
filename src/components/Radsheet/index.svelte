@@ -18,7 +18,7 @@
 	import { keymap, createKeymapHandler } from './commands/keymap.js';
 	import { createRenderContext } from './render/createRenderContext.js';
 	import EditorOverlay from '../EditorOverlay.svelte';
-	import { localXY, pointToCell, xToColInHeader, yToRowInHeader } from './math.js';
+	import { localXY, yToRowInHeader } from './math.js';
 	import {
 		parseTSVChunked,
 		serializeRangeToTSVAsync as serializeRangeToTSVAsyncImpl
@@ -93,9 +93,95 @@
 	const setLastActiveCol = (v) => (lastActiveCol = v);
 	const setIsSelectionCopied = (v) => (isSelectionCopied = v);
 
+	// Column widths and helpers (variable widths)
+	let colWidths = $state(columns.map(() => CELL_WIDTH));
+	const MIN_COL_WIDTH = 40;
+	function getColWidth(c) {
+		return colWidths[c] ?? CELL_WIDTH;
+	}
+	function setColumnWidth(c, w) {
+		colWidths[c] = Math.max(MIN_COL_WIDTH, Math.round(w));
+		scheduleRender();
+	}
+	function colLeft(c) {
+		let x = 0;
+		for (let i = 0; i < c; i++) x += getColWidth(i);
+		return x;
+	}
+	function xToColVariable(x) {
+		const target = x + scrollLeft;
+		let acc = 0;
+		for (let c = 0; c < columns.length; c++) {
+			const w = getColWidth(c);
+			if (acc + w > target) return c;
+			acc += w;
+		}
+		return columns.length - 1;
+	}
+	function pointToCellVariable(x, y) {
+		const col = xToColVariable(x);
+		const adjustedY = y + scrollTop;
+		const row = Math.max(0, Math.floor(adjustedY / CELL_HEIGHT));
+		return { row, col };
+	}
+	function getColEdgeNearX(x, threshold = 5) {
+		// returns index of column to resize if near a right edge, else null
+		let acc = 0;
+		for (let c = 0; c < columns.length; c++) {
+			const w = getColWidth(c);
+			const edgeAbs = acc + w;
+			const edgeLocal = edgeAbs - scrollLeft;
+			if (Math.abs(edgeLocal - x) <= threshold) return c;
+			acc = edgeAbs;
+		}
+		return null;
+	}
+	let measureCtx = null;
+	function ensureMeasureCtx() {
+		if (measureCtx) return measureCtx;
+		if (typeof document === 'undefined') return null;
+		const canvas = document.createElement('canvas');
+		measureCtx = canvas.getContext('2d');
+		return measureCtx;
+	}
+	function measureText(text, opts = { bold: false }) {
+		const ctx = ensureMeasureCtx();
+		if (!ctx) return 0;
+		ctx.font = `${opts.bold ? '600 ' : ''}12px Inter, system-ui, sans-serif`;
+		return ctx.measureText(String(text ?? '')).width;
+	}
+	function autoFitColumn(colIndex) {
+		const padX = 8;
+		let maxW = measureText(columns[colIndex] ?? String(colIndex), { bold: true }) + padX * 2;
+		const maxRowsToScan = Math.min(sheet.numRows, 1000);
+		for (let r = 0; r < maxRowsToScan; r++) {
+			const v = readCell(r, colIndex);
+			if (v !== '' && v != null) {
+				const w = measureText(v, { bold: false }) + padX * 2;
+				if (w > maxW) maxW = w;
+			}
+		}
+		setColumnWidth(colIndex, Math.max(MIN_COL_WIDTH, Math.ceil(maxW)));
+	}
+
+	// Hover UI state for resize affordance
+	let hoverResizeCol = $state(null);
+	const getHoverResizeCol = () => hoverResizeCol;
+	const setHoverResizeCol = (idx) => {
+		hoverResizeCol = typeof idx === 'number' ? idx : null;
+		scheduleRender();
+	};
+
 	// Metrics and derived viewport calculations
 	const totalHeight = $derived((sheetVersion, sheet.numRows) * CELL_HEIGHT);
-	const totalWidth = $derived(columns.length * CELL_WIDTH);
+	const totalWidth = $derived(
+		(() => {
+			colWidths;
+			let sum = 0;
+			for (let i = 0; i < columns.length; i++) sum += getColWidth(i);
+			return sum;
+		})()
+	);
 
 	// Visible window (row/column indices)
 	const startIndexRow = $derived(Math.floor(scrollTop / CELL_HEIGHT));
@@ -106,9 +192,42 @@
 
 	// Expose reactive numRows for template/props updates on addRows()
 	const numRowsView = $derived((sheetVersion, sheet.numRows));
-	const startIndexCol = $derived(Math.floor(scrollLeft / CELL_WIDTH));
-	const visibleColCount = $derived(Math.ceil(containerWidth / CELL_WIDTH) + 1);
-	const endIndexCol = $derived(Math.min(columns.length, startIndexCol + visibleColCount));
+	const startIndexCol = $derived(
+		(() => {
+			colWidths;
+			let acc = 0;
+			for (let c = 0; c < columns.length; c++) {
+				const w = getColWidth(c);
+				if (acc + w > scrollLeft) return c;
+				acc += w;
+			}
+			return columns.length;
+		})()
+	);
+	const endIndexCol = $derived(
+		(() => {
+			colWidths;
+			let left = 0;
+			let start = 0;
+			for (let c = 0; c < columns.length; c++) {
+				const w = getColWidth(c);
+				if (left + w > scrollLeft) {
+					start = c;
+					break;
+				}
+				left += w;
+			}
+			let x = left;
+			let end = start;
+			for (let c = start; c < columns.length; c++) {
+				x += getColWidth(c);
+				end = c + 1;
+				if (x >= scrollLeft + containerWidth) break;
+			}
+			return Math.min(end, columns.length);
+		})()
+	);
+	const visibleColCount = $derived(endIndexCol - startIndexCol);
 
 	// Editor state
 	let editorState = $state({
@@ -132,7 +251,9 @@
 				getContainerWidth,
 				getTotalHeight,
 				getTotalWidth,
-				getConstants
+				getConstants,
+				getColLeft: (c) => colLeft(c),
+				getColWidth: (c) => getColWidth(c)
 			},
 			setters: { setScrollTop, setScrollLeft }
 		},
@@ -178,9 +299,14 @@
 			drawHeaders: () => drawHeaders(),
 			drawGrid: () => drawGrid(),
 			localXY: (el, e) => localXY(el, e),
-			pointToCell: (x, y) => pointToCell(x, y, scrollLeft, scrollTop, CELL_WIDTH, CELL_HEIGHT),
-			xToColInHeader: (x) => xToColInHeader(x, scrollLeft, CELL_WIDTH),
-			yToRowInHeader: (y) => yToRowInHeader(y, scrollTop, CELL_HEIGHT)
+			pointToCell: (x, y) => pointToCellVariable(x, y),
+			xToColInHeader: (x) => xToColVariable(x),
+			getColEdgeNearX: (x, threshold) => getColEdgeNearX(x, threshold),
+			setColumnWidth: (idx, w) => setColumnWidth(idx, w),
+			autoFitColumn: (idx) => autoFitColumn(idx),
+			getColLeft: (c) => colLeft(c),
+			yToRowInHeader: (y) => yToRowInHeader(y, scrollTop, CELL_HEIGHT),
+			setHoverResizeCol: (idx) => setHoverResizeCol(idx)
 		},
 		refs: {
 			getGridCanvas: () => gridCanvas,
@@ -310,7 +436,10 @@
 			getSelection: () => selection.getSelection(),
 			anchorRow: () => anchorRow,
 			anchorCol: () => anchorCol,
-			isSelectionCopied: () => isSelectionCopied
+			isSelectionCopied: () => isSelectionCopied,
+			getColWidth: (c) => getColWidth(c),
+			colLeft: (c) => colLeft(c),
+			getHoverResizeCol: () => hoverResizeCol
 		});
 
 		// Ensure first paint happens after render context is ready
@@ -345,6 +474,7 @@
 			onpointerdown={drag.onColHeadPointerDown}
 			onpointermove={drag.onColHeadPointerMove}
 			onpointerup={drag.onColHeadPointerUp}
+			onpointerleave={drag.onColHeadPointerLeave}
 			ondblclick={dbl.onAnyDblClick}
 			style="height: {COLUMN_HEADER_HEIGHT}px; width: 100%;"
 		></canvas>
@@ -391,6 +521,8 @@
 			{CELL_HEIGHT}
 			{scrollLeft}
 			{scrollTop}
+			getColLeft={(c) => colLeft(c)}
+			getColWidth={(c) => getColWidth(c)}
 		/>
 	</div>
 

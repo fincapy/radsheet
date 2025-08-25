@@ -5,6 +5,7 @@
 export function createDragSelectionController({ getters, setters, methods, refs, constants }) {
 	let lastPointer = { x: 0, y: 0 };
 	let auto = { vx: 0, vy: 0, raf: null };
+	let resizing = { active: false, colIndex: -1, startX: 0, startWidth: 0 };
 
 	function beginSelection(kind, row, col, e) {
 		if (methods.isEditorOpen()) methods.commitEditor(true);
@@ -128,20 +129,58 @@ export function createDragSelectionController({ getters, setters, methods, refs,
 		canvas.setPointerCapture(e.pointerId);
 		const { x } = methods.localXY(canvas, e);
 		lastPointer = { x, y: 0 };
+		// Check resize hotspot near right edge
+		const hitCol = methods.getColEdgeNearX ? methods.getColEdgeNearX(x, 5) : null;
+		if (hitCol != null) {
+			resizing = {
+				active: true,
+				colIndex: hitCol,
+				startX: x,
+				startWidth: methods.getColLeft(hitCol + 1) - methods.getColLeft(hitCol)
+			};
+			return;
+		}
 		const col = methods.xToColInHeader(x);
 		beginSelection('col', 0, col, e);
 	}
 	function onColHeadPointerMove(e) {
-		if (!getters.getSelecting()) return;
-		const canvas = refs.getColHeadCanvas();
-		const { x } = methods.localXY(canvas, e);
+		const canvasMove = refs.getColHeadCanvas();
+		const { x } = methods.localXY(canvasMove, e);
 		lastPointer = { x, y: 0 };
+		// Update hover indicator and cursor
+		if (!getters.getSelecting() && !resizing.active) {
+			const hit = methods.getColEdgeNearX ? methods.getColEdgeNearX(x, 5) : null;
+			methods.setHoverResizeCol(hit);
+			if (canvasMove && canvasMove.style) {
+				canvasMove.style.cursor = hit != null ? 'col-resize' : 'default';
+			}
+		}
+		if (resizing.active) {
+			const dx = x - resizing.startX;
+			methods.setColumnWidth(resizing.colIndex, Math.max(40, resizing.startWidth + dx));
+			methods.drawHeaders();
+			methods.drawGrid();
+			return;
+		}
+		if (!getters.getSelecting()) return;
 		updateSelectionTo(0, methods.xToColInHeader(x));
 		updateAutoScroll(x, 0);
+	}
+
+	function onColHeadPointerLeave() {
+		const canvas = refs.getColHeadCanvas();
+		methods.setHoverResizeCol(null);
+		if (canvas && canvas.style) canvas.style.cursor = 'default';
 	}
 	function onColHeadPointerUp(e) {
 		const canvas = refs.getColHeadCanvas();
 		canvas.releasePointerCapture(e.pointerId);
+		if (resizing.active) {
+			resizing = { active: false, colIndex: -1, startX: 0, startWidth: 0 };
+			methods.setHoverResizeCol(null);
+			if (canvas && canvas.style) canvas.style.cursor = 'default';
+			return;
+		}
 		endSelection();
 	}
 
@@ -178,6 +217,7 @@ export function createDragSelectionController({ getters, setters, methods, refs,
 		onColHeadPointerDown,
 		onColHeadPointerMove,
 		onColHeadPointerUp,
+		onColHeadPointerLeave,
 		onRowHeadPointerDown,
 		onRowHeadPointerMove,
 		onRowHeadPointerUp

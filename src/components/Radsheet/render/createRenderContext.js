@@ -22,7 +22,9 @@ export function createRenderContext(env) {
 				getSelection: env.getSelection,
 				anchorRow: env.anchorRow(),
 				anchorCol: env.anchorCol(),
-				isSelectionCopied: env.isSelectionCopied()
+				isSelectionCopied: env.isSelectionCopied(),
+				getColWidth: env.getColWidth,
+				colLeft: env.colLeft
 			};
 		},
 		getHeaderParams() {
@@ -42,7 +44,10 @@ export function createRenderContext(env) {
 				endIndexCol: env.endIndexCol(),
 				startIndexRow: env.startIndexRow(),
 				endIndexRow: env.endIndexRow(),
-				getSelection: env.getSelection
+				getSelection: env.getSelection,
+				getColWidth: env.getColWidth,
+				colLeft: env.colLeft,
+				getHoverResizeCol: env.getHoverResizeCol
 			};
 		}
 	};

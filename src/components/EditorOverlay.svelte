@@ -1,5 +1,14 @@
 <script>
-	const { editorState, commandBus, CELL_WIDTH, CELL_HEIGHT, scrollLeft, scrollTop } = $props();
+	const {
+		editorState,
+		commandBus,
+		CELL_WIDTH,
+		CELL_HEIGHT,
+		scrollLeft,
+		scrollTop,
+		getColLeft,
+		getColWidth
+	} = $props();
 
 	let inputEl = $state(null);
 
@@ -21,9 +30,10 @@
 	<input
 		class="editor absolute z-20 border-2 border-blue-500 bg-white px-2 text-sm outline-none"
 		bind:this={inputEl}
-		style="left: {editorState.col * CELL_WIDTH - scrollLeft}px; top: {editorState.row *
-			CELL_HEIGHT -
-			scrollTop}px; width: {CELL_WIDTH}px; height: {CELL_HEIGHT}px;"
+		style="left: {(getColLeft ? getColLeft(editorState.col) : editorState.col * CELL_WIDTH) -
+			scrollLeft}px; top: {editorState.row * CELL_HEIGHT - scrollTop}px; width: {getColWidth
+			? getColWidth(editorState.col)
+			: CELL_WIDTH}px; height: {CELL_HEIGHT}px;"
 		value={editorState.value}
 		oninput={(e) =>
 			commandBus.dispatch({ type: 'UpdateEditorValue', payload: { value: e.currentTarget.value } })}

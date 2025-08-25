@@ -22,7 +22,9 @@ export function setupControllers({
 			getContainerWidth: vp.getters.getContainerWidth,
 			getTotalHeight: vp.getters.getTotalHeight,
 			getTotalWidth: vp.getters.getTotalWidth,
-			getConstants: vp.getters.getConstants
+			getConstants: vp.getters.getConstants,
+			getColLeft: vp.getters.getColLeft,
+			getColWidth: vp.getters.getColWidth
 		},
 		setters: {
 			setScrollTop: vp.setters.setScrollTop,
@@ -127,7 +129,11 @@ export function setupControllers({
 			localXY: methods.localXY,
 			pointToCell: methods.pointToCell,
 			xToColInHeader: methods.xToColInHeader,
-			yToRowInHeader: methods.yToRowInHeader
+			yToRowInHeader: methods.yToRowInHeader,
+			getColEdgeNearX: methods.getColEdgeNearX,
+			setColumnWidth: methods.setColumnWidth,
+			getColLeft: methods.getColLeft,
+			setHoverResizeCol: methods.setHoverResizeCol
 		},
 		refs,
 		constants
@@ -140,7 +146,9 @@ export function setupControllers({
 		},
 		methods: {
 			localXY: methods.localXY,
-			pointToCell: methods.pointToCell
+			pointToCell: methods.pointToCell,
+			getColEdgeNearX: methods.getColEdgeNearX,
+			autoFitColumn: methods.autoFitColumn
 		},
 		controllers: { editor },
 		refs

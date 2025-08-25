@@ -26,9 +26,11 @@ export function createViewportController({ getters, setters }) {
 	function scrollCellIntoView(r, c) {
 		const { CELL_HEIGHT, CELL_WIDTH } = getters.getConstants();
 		const cellTop = r * CELL_HEIGHT;
-		const cellLeft = c * CELL_WIDTH;
+		const leftFn = getters.getColLeft;
+		const widthFn = getters.getColWidth;
+		const cellLeft = leftFn ? leftFn(c) : c * CELL_WIDTH;
 		const cellBottom = cellTop + CELL_HEIGHT;
-		const cellRight = cellLeft + CELL_WIDTH;
+		const cellRight = cellLeft + (widthFn ? widthFn(c) : CELL_WIDTH);
 		let newTop = getters.getScrollTop();
 		let newLeft = getters.getScrollLeft();
 		const containerHeight = getters.getContainerHeight();

@@ -25,7 +25,9 @@ export function drawGrid(opts) {
 		getSelection,
 		anchorRow,
 		anchorCol,
-		isSelectionCopied = false
+		isSelectionCopied = false,
+		getColWidth,
+		colLeft
 	} = opts;
 
 	if (!gridCanvas) return;
@@ -34,7 +36,8 @@ export function drawGrid(opts) {
 	ctx.fillStyle = '#ffffff';
 	ctx.fillRect(0, 0, containerWidth, containerHeight);
 
-	const offsetX = -(scrollLeft % CELL_WIDTH);
+	const firstLeft = colLeft ? colLeft(startIndexCol) : startIndexCol * CELL_WIDTH;
+	const offsetX = firstLeft - scrollLeft;
 	const offsetY = -(scrollTop % CELL_HEIGHT);
 
 	ctx.save();
@@ -44,9 +47,16 @@ export function drawGrid(opts) {
 	ctx.strokeStyle = '#e5e7eb';
 	ctx.lineWidth = 1;
 	for (let c = startIndexCol; c <= endIndexCol; c++) {
-		const x = (c - startIndexCol) * CELL_WIDTH + 0.5;
+		const base = colLeft ? colLeft(startIndexCol) : startIndexCol * CELL_WIDTH;
+		const x = (colLeft ? colLeft(c) : c * CELL_WIDTH) - base + 0.5;
 		ctx.beginPath();
 		ctx.moveTo(x, 0.5);
+		const widthPx = (() => {
+			if (!getColWidth) return visibleColCount * CELL_WIDTH;
+			let sum = 0;
+			for (let k = startIndexCol; k < endIndexCol; k++) sum += getColWidth(k);
+			return sum;
+		})();
 		ctx.lineTo(x, visibleRowCount * CELL_HEIGHT + 0.5);
 		ctx.stroke();
 	}
@@ -54,7 +64,13 @@ export function drawGrid(opts) {
 		const y = (r - startIndexRow) * CELL_HEIGHT + 0.5;
 		ctx.beginPath();
 		ctx.moveTo(0.5, y);
-		ctx.lineTo(visibleColCount * CELL_WIDTH + 0.5, y);
+		const widthPx2 = (() => {
+			if (!getColWidth) return visibleColCount * CELL_WIDTH;
+			let sum = 0;
+			for (let k = startIndexCol; k < endIndexCol; k++) sum += getColWidth(k);
+			return sum;
+		})();
+		ctx.lineTo(widthPx2 + 0.5, y);
 		ctx.stroke();
 	}
 
@@ -65,13 +81,15 @@ export function drawGrid(opts) {
 	const padX = 8;
 	for (let r = startIndexRow; r < endIndexRow; r++) {
 		for (let c = startIndexCol; c < endIndexCol; c++) {
-			const x = (c - startIndexCol) * CELL_WIDTH;
+			const base = colLeft ? colLeft(startIndexCol) : startIndexCol * CELL_WIDTH;
+			const x = (colLeft ? colLeft(c) : c * CELL_WIDTH) - base;
 			const y = (r - startIndexRow) * CELL_HEIGHT;
 			const value = readCell(r, c);
 			if (value !== '' && value != null) {
 				ctx.save();
 				ctx.beginPath();
-				ctx.rect(x + 1, y + 1, CELL_WIDTH - 2, CELL_HEIGHT - 2);
+				const w = getColWidth ? getColWidth(c) : CELL_WIDTH;
+				ctx.rect(x + 1, y + 1, w - 2, CELL_HEIGHT - 2);
 				ctx.clip();
 				ctx.fillText(String(value), x + padX, y + CELL_HEIGHT / 2);
 				ctx.restore();
@@ -92,8 +110,12 @@ export function drawGrid(opts) {
 
 		// If any part is visible, paint the fill clipped to viewport
 		if (vC1 <= vC2 && vR1 <= vR2) {
-			const x0 = (vC1 - startIndexCol) * CELL_WIDTH;
-			const x1 = (vC2 - startIndexCol + 1) * CELL_WIDTH;
+			const base = colLeft ? colLeft(startIndexCol) : startIndexCol * CELL_WIDTH;
+			const x0 = (colLeft ? colLeft(vC1) : vC1 * CELL_WIDTH) - base;
+			const x1 =
+				(colLeft
+					? colLeft(vC2) + (getColWidth ? getColWidth(vC2) : CELL_WIDTH)
+					: (vC2 + 1) * CELL_WIDTH) - base;
 			const y0 = (vR1 - startIndexRow) * CELL_HEIGHT;
 			const y1 = (vR2 - startIndexRow + 1) * CELL_HEIGHT;
 			ctx.fillStyle = 'rgba(59,130,246,0.12)';
@@ -110,10 +132,19 @@ export function drawGrid(opts) {
 		} else {
 			ctx.setLineDash([]);
 		}
-		const viewW = visibleColCount * CELL_WIDTH;
+		const viewW = (() => {
+			if (!getColWidth) return visibleColCount * CELL_WIDTH;
+			let sum = 0;
+			for (let k = startIndexCol; k < endIndexCol; k++) sum += getColWidth(k);
+			return sum;
+		})();
 		const viewH = visibleRowCount * CELL_HEIGHT;
-		const selX0 = (c1 - startIndexCol) * CELL_WIDTH;
-		const selX1 = (c2 + 1 - startIndexCol) * CELL_WIDTH;
+		const base2 = colLeft ? colLeft(startIndexCol) : startIndexCol * CELL_WIDTH;
+		const selX0 = (colLeft ? colLeft(c1) : c1 * CELL_WIDTH) - base2;
+		const selX1 =
+			(colLeft
+				? colLeft(c2) + (getColWidth ? getColWidth(c2) : CELL_WIDTH)
+				: (c2 + 1) * CELL_WIDTH) - base2;
 		const selY0 = (r1 - startIndexRow) * CELL_HEIGHT;
 		const selY1 = (r2 + 1 - startIndexRow) * CELL_HEIGHT;
 		const isTopAtBoundary = selY0 <= 0;
