@@ -33,16 +33,25 @@
 	import { drawHeaders as drawHeadersImpl } from './drawHeaders.js';
 	import { drawGrid as drawGridImpl } from './drawGrid.js';
 	import { createDragSelection } from './dragSelection.js';
+	import { createViewportController } from './controllers/viewportController.js';
+
+	// bump when data changes so effect repaints
+	let sheetVersion = $state(0);
+	const executeWithRerender = (fn) => {
+		fn();
+		sheetVersion++;
+	};
 
 	// Domain model (source of truth for cell values)
 	let sheet = $state.raw(new Sheet());
+	const readCell = (r, c) => sheet.getValue(r, c);
+	const writeCell = (r, c, v) => executeWithRerender(() => sheet.setValue(r, c, v));
 
 	// Viewport + layout state
 	let scrollTop = $state(0);
 	let scrollLeft = $state(0);
 	let containerWidth = $state(0);
 	let containerHeight = $state(0);
-	let sheetVersion = $state(0); // bump when data changes so effect repaints
 
 	// Canvas refs
 	let gridCanvas; // main cells
@@ -61,25 +70,6 @@
 	let lastActiveCol = $state(0);
 	let isSelectionCopied = $state(false); // Track if selection is copied (for dotted border)
 
-	// Cell access adapters to support multiple Sheet APIs
-	function readCell(r, c) {
-		if (sheet?.getValue) return sheet.getValue(r, c);
-		if (sheet?.value) return sheet.value(r, c);
-		if (sheet?.cells) return sheet.cells[`${r},${c}`] ?? '';
-		return '';
-	}
-	function writeCell(r, c, v) {
-		if (sheet?.setValue) {
-			sheet.setValue(r, c, v);
-		} else if (sheet?.set) {
-			let ret = sheet.set(r, c, v);
-			if (ret && ret !== sheet) sheet = ret; // support immutable returns
-		} else if (sheet?.cells) {
-			sheet.cells[`${r},${c}`] = v;
-		}
-		sheetVersion++;
-	}
-
 	// Editor overlay state
 	let editor = $state({ open: false, row: 0, col: 0, value: '' });
 	let inputEl = $state(null);
@@ -89,26 +79,10 @@
 			window.__sheet = sheet;
 		}
 
-		// Set up resize observer to fix overdrawing issues on container resize
-		const resizeObserver = new ResizeObserver((entries) => {
-			for (let entry of entries) {
-				if (scrollLeft > 1 && scrollTop > 1) {
-					clampScroll(scrollTop - 1, scrollLeft - 1);
-				} else if (scrollLeft > 1) {
-					clampScroll(scrollTop, scrollLeft - 1);
-				} else if (scrollTop > 1) {
-					clampScroll(scrollTop - 1, scrollLeft);
-				}
-			}
-		});
-
-		// Observe the grid container element
-		if (gridContainerEl) {
-			resizeObserver.observe(gridContainerEl);
-		}
+		const cleanupResizeObserver = viewport.setupResizeObserver(gridContainerEl);
 
 		return () => {
-			resizeObserver.disconnect();
+			cleanupResizeObserver();
 		};
 	});
 
@@ -120,7 +94,7 @@
 
 	/** Open the inline editor at the given cell. Optionally seed with initial text. */
 	function openEditorAt(row, col, seedText = null) {
-		scrollCellIntoView(row, col);
+		viewport.scrollCellIntoView(row, col);
 		anchorRow = focusRow = lastActiveRow = row;
 		anchorCol = focusCol = lastActiveCol = col;
 		const current = String(readCell(row, col) ?? '');
@@ -194,6 +168,24 @@
 
 	// autoscroll while dragging near edges handled in dragSelection module
 
+	// Viewport controller
+	const viewport = createViewportController({
+		getters: {
+			getScrollTop: () => scrollTop,
+			getScrollLeft: () => scrollLeft,
+			getContainerHeight: () => containerHeight,
+			getContainerWidth: () => containerWidth,
+			getTotalHeight: () => totalHeight,
+			getTotalWidth: () => totalWidth,
+			getConstants: () => ({ CELL_HEIGHT, CELL_WIDTH })
+		},
+		setters: {
+			setScrollTop: (v) => (scrollTop = v),
+			setScrollLeft: (v) => (scrollLeft = v)
+		}
+	});
+	const { onWheel } = viewport;
+
 	// Metrics and derived viewport calculations
 	const totalHeight = $derived((sheetVersion, sheet.numRows) * CELL_HEIGHT);
 	const totalWidth = $derived(columns.length * CELL_WIDTH);
@@ -220,20 +212,6 @@
 		const c1 = Math.max(0, Math.min(anchorCol, focusCol));
 		const c2 = Math.min(columns.length - 1, Math.max(anchorCol, focusCol));
 		return { r1, r2, c1, c2 };
-	}
-
-	/** Clamp scroll positions to content bounds. */
-	function clampScroll(newTop, newLeft) {
-		const maxScrollTop = Math.max(0, totalHeight - containerHeight);
-		const maxScrollLeft = Math.max(0, totalWidth - containerWidth);
-		scrollTop = Math.max(0, Math.min(newTop, maxScrollTop));
-		scrollLeft = Math.max(0, Math.min(newLeft, maxScrollLeft));
-	}
-
-	/** Handle wheel scrolling inside the main grid. */
-	function onWheel(e) {
-		e.preventDefault();
-		clampScroll(scrollTop + e.deltaY, scrollLeft + e.deltaX);
 	}
 
 	// Helpers: local pointer coordinates and pixel -> cell mappers
@@ -303,7 +281,7 @@
 			drawHeaders: () => drawHeaders(),
 			drawGrid: () => drawGrid(),
 			getSelection: () => getSelection(),
-			clampScroll: (t, l) => clampScroll(t, l),
+			clampScroll: (t, l) => viewport.clampScroll(t, l),
 			localXY: (el, e) => localXY(el, e),
 			pointToCell: (x, y) => pointToCell(x, y),
 			xToColInHeader: (x) => xToColInHeader(x),
@@ -443,7 +421,7 @@
 		anchorRow = focusRow = lastActiveRow = r;
 		anchorCol = focusCol = lastActiveCol = c;
 		isSelectionCopied = false; // Reset copied state when selection changes
-		scrollCellIntoView(r, c);
+		viewport.scrollCellIntoView(r, c);
 		drawHeaders();
 		drawGrid();
 	}
@@ -472,7 +450,7 @@
 		lastActiveRow = newFocusRow;
 		lastActiveCol = newFocusCol;
 
-		scrollCellIntoView(newFocusRow, newFocusCol);
+		viewport.scrollCellIntoView(newFocusRow, newFocusCol);
 		drawHeaders();
 		drawGrid();
 	}
@@ -512,7 +490,7 @@
 		lastActiveRow = newFocusRow;
 		lastActiveCol = newFocusCol;
 
-		scrollCellIntoView(newFocusRow, newFocusCol);
+		viewport.scrollCellIntoView(newFocusRow, newFocusCol);
 		drawHeaders();
 		drawGrid();
 	}
@@ -525,20 +503,6 @@
 			drawHeaders();
 			drawGrid();
 		}
-	}
-
-	function scrollCellIntoView(r, c) {
-		const cellTop = r * CELL_HEIGHT;
-		const cellLeft = c * CELL_WIDTH;
-		const cellBottom = cellTop + CELL_HEIGHT;
-		const cellRight = cellLeft + CELL_WIDTH;
-		let newTop = scrollTop;
-		let newLeft = scrollLeft;
-		if (cellTop < scrollTop) newTop = cellTop;
-		else if (cellBottom > scrollTop + containerHeight) newTop = cellBottom - containerHeight;
-		if (cellLeft < scrollLeft) newLeft = cellLeft;
-		else if (cellRight > scrollLeft + containerWidth) newLeft = cellRight - containerWidth;
-		clampScroll(newTop, newLeft);
 	}
 
 	// Redraw on relevant changes — explicitly read deps so $effect tracks them
@@ -647,7 +611,7 @@
 		{scrollTop}
 		{totalHeight}
 		viewportHeight={containerHeight}
-		onUpdate={(newTop) => clampScroll(newTop, scrollLeft)}
+		onUpdate={(newTop) => viewport.clampScroll(newTop, scrollLeft)}
 	/>
 
 	<!-- BL filler -->
@@ -658,7 +622,7 @@
 		{scrollLeft}
 		{totalWidth}
 		{containerWidth}
-		onUpdate={(newLeft) => clampScroll(scrollTop, newLeft)}
+		onUpdate={(newLeft) => viewport.clampScroll(scrollTop, newLeft)}
 	/>
 
 	<!-- BR filler -->
