@@ -32,7 +32,7 @@ export function createKeymapHandler(keymap, commandBus) {
 		// Fallback for single-character typing to open editor
 		if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
 			e.preventDefault();
-			commandBus.dispatch({ type: 'OpenEditorAndType', key: e.key });
+			commandBus.dispatch({ type: 'OpenEditorAndType', payload: { key: e.key } });
 		}
 	};
 }

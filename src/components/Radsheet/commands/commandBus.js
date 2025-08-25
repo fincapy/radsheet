@@ -49,10 +49,8 @@ export function createCommandBus({ getters, setters, controllers }) {
 			case 'UpdateEditorValue':
 				controllers.editor.updateEditorValue(payload.value);
 				break;
-
-			// Clipboard Commands
 			case 'CopySelection':
-				setters.handleCopy();
+				controllers.selection.handleCopy();
 				break;
 
 			default:

@@ -116,11 +116,19 @@ export function createSelectionController({ getters, setters, controllers }) {
 		controllers.viewport.scrollCellIntoView(newFocusRow, newFocusCol);
 	}
 
+	function handleCopy() {
+		const sel = getSelection();
+		if (sel) {
+			setters.setIsSelectionCopied(true);
+		}
+	}
+
 	return {
 		getSelection,
 		setCell,
 		moveFocusBy,
 		extendSelectionBy,
-		extendSelectionToEdge
+		extendSelectionToEdge,
+		handleCopy
 	};
 }

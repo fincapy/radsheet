@@ -4,24 +4,6 @@
 	import { Sheet } from '../../domain/sheet/sheet.js';
 	import { columns } from '../../domain/constants/columns.js';
 	import { onMount, onDestroy } from 'svelte';
-	/**
-	 * Radsheet
-	 *
-	 * Responsibilities (high-level):
-	 * - Own UI state (selection, focus, editor overlay, scroll positions)
-	 * - Map pointer/keyboard events to state transitions
-	 * - Delegate drawing to small, testable renderers in `components/radsheet/*`
-	 * - Perform just enough math to compute the viewport and selection ranges
-	 *
-	 * Reactivity overview:
-	 * - Primitive state: scrollTop/Left, container sizes, selection anchors/focus, sheetVersion
-	 * - Derived state: total sizes, start/end indices, visible counts
-	 * - Rendering: a single $effect explicitly reads all inputs that should trigger a redraw
-	 *
-	 * Notes:
-	 * - We do not depend on transient UI flags to trigger rerenders; redraws are driven by the
-	 *   above state only. This keeps rendering deterministic and easy to reason about.
-	 */
 	import {
 		CELL_HEIGHT,
 		CELL_WIDTH,
@@ -32,12 +14,9 @@
 	} from './constants.js';
 	import { drawHeaders as drawHeadersImpl } from './drawHeaders.js';
 	import { drawGrid as drawGridImpl } from './drawGrid.js';
-	import { createDragSelectionController } from './controllers/dragSelectionController.js';
-	import { createViewportController } from './controllers/viewportController.js';
-	import { createSelectionController } from './controllers/selectionController.js';
-	import { createCommandBus } from './commands/commandBus.js';
+	import { setupControllers } from './controllers/setupControllers.js';
 	import { keymap, createKeymapHandler } from './input/keymap.js';
-	import { createEditorController } from './controllers/editorController.js';
+	import { createRenderContext } from './render/createRenderContext.js';
 	import EditorOverlay from '../EditorOverlay.svelte';
 	import { localXY, pointToCell, xToColInHeader, yToRowInHeader } from './math.js';
 
@@ -60,6 +39,17 @@
 	let containerWidth = $state(0);
 	let containerHeight = $state(0);
 
+	// Viewport getters/setters
+	const getScrollTop = () => scrollTop;
+	const getScrollLeft = () => scrollLeft;
+	const getContainerHeight = () => containerHeight;
+	const getContainerWidth = () => containerWidth;
+	const getTotalHeight = () => totalHeight;
+	const getTotalWidth = () => totalWidth;
+	const getConstants = () => ({ CELL_HEIGHT, CELL_WIDTH });
+	const setScrollTop = (v) => (scrollTop = v);
+	const setScrollLeft = (v) => (scrollLeft = v);
+
 	// Canvas refs
 	let gridCanvas; // main cells
 	let colHeadCanvas; // column headers
@@ -76,6 +66,28 @@
 	let lastActiveRow = $state(0);
 	let lastActiveCol = $state(0);
 	let isSelectionCopied = $state(false); // Track if selection is copied (for dotted border)
+
+	// Selection getters/setters
+	const getSelecting = () => selecting;
+	const getDragMode = () => dragMode;
+	const getAnchorRow = () => anchorRow;
+	const getAnchorCol = () => anchorCol;
+	const getFocusRow = () => focusRow;
+	const getFocusCol = () => focusCol;
+	const getLastActiveRow = () => lastActiveRow;
+	const getLastActiveCol = () => lastActiveCol;
+	const getSheetNumRows = () => sheet.numRows;
+	const getNumRows = () => sheet.numRows;
+	const getColumnsLength = () => columns.length;
+	const setSelecting = (v) => (selecting = v);
+	const setDragMode = (v) => (dragMode = v);
+	const setAnchorRow = (v) => (anchorRow = v);
+	const setAnchorCol = (v) => (anchorCol = v);
+	const setFocusRow = (v) => (focusRow = v);
+	const setFocusCol = (v) => (focusCol = v);
+	const setLastActiveRow = (v) => (lastActiveRow = v);
+	const setLastActiveCol = (v) => (lastActiveCol = v);
+	const setIsSelectionCopied = (v) => (isSelectionCopied = v);
 
 	// Metrics and derived viewport calculations
 	const totalHeight = $derived((sheetVersion, sheet.numRows) * CELL_HEIGHT);
@@ -103,158 +115,54 @@
 		seedText: null
 	});
 
-	onMount(() => {
-		// Expose sheet API for e2e tests
-		if (typeof window !== 'undefined') {
-			window.__sheet = sheet;
-		}
-
-		const cleanupResizeObserver = viewport.setupResizeObserver(gridContainerEl);
-
-		return () => {
-			cleanupResizeObserver();
-		};
-	});
-
-	onDestroy(() => {
-		if (typeof window !== 'undefined') {
-			if (window.__sheet === sheet) delete window.__sheet;
-		}
-	});
-
-	// Viewport controller
-	const viewport = createViewportController({
-		getters: {
-			getScrollTop: () => scrollTop,
-			getScrollLeft: () => scrollLeft,
-			getContainerHeight: () => containerHeight,
-			getContainerWidth: () => containerWidth,
-			getTotalHeight: () => totalHeight,
-			getTotalWidth: () => totalWidth,
-			getConstants: () => ({ CELL_HEIGHT, CELL_WIDTH })
+	// Controllers setup
+	const { viewport, selection, commandBus, drag, dbl } = setupControllers({
+		viewport: {
+			getters: {
+				getScrollTop,
+				getScrollLeft,
+				getContainerHeight,
+				getContainerWidth,
+				getTotalHeight,
+				getTotalWidth,
+				getConstants
+			},
+			setters: { setScrollTop, setScrollLeft }
 		},
-		setters: {
-			setScrollTop: (v) => (scrollTop = v),
-			setScrollLeft: (v) => (scrollLeft = v)
-		}
-	});
-	const { onWheel } = viewport;
-
-	// Selection controller
-	const selection = createSelectionController({
-		getters: {
-			getAnchorRow: () => anchorRow,
-			getAnchorCol: () => anchorCol,
-			getFocusRow: () => focusRow,
-			getFocusCol: () => focusCol,
-			getLastActiveRow: () => lastActiveRow,
-			getLastActiveCol: () => lastActiveCol,
-			getSheetNumRows: () => sheet.numRows,
-			getColumnsLength: () => columns.length
+		selection: {
+			getters: {
+				getSelecting,
+				getDragMode,
+				getAnchorRow,
+				getAnchorCol,
+				getFocusRow,
+				getFocusCol,
+				getLastActiveRow,
+				getLastActiveCol,
+				getSheetNumRows,
+				getColumnsLength,
+				getNumRows
+			},
+			setters: {
+				setSelecting,
+				setDragMode,
+				setAnchorRow,
+				setAnchorCol,
+				setFocusRow,
+				setFocusCol,
+				setLastActiveRow,
+				setLastActiveCol,
+				setIsSelectionCopied
+			}
 		},
-		setters: {
-			setAnchorRow: (v) => (anchorRow = v),
-			setAnchorCol: (v) => (anchorCol = v),
-			setFocusRow: (v) => (focusRow = v),
-			setFocusCol: (v) => (focusCol = v),
-			setLastActiveRow: (v) => (lastActiveRow = v),
-			setLastActiveCol: (v) => (lastActiveCol = v),
-			setIsSelectionCopied: (v) => (isSelectionCopied = v)
-		},
-		controllers: {
-			viewport
-		}
-	});
-
-	// Editor Controller
-	const editorController = createEditorController({
-		editorState,
-		getters: {
-			readCell
-		},
-		setters: {
-			writeCell
-		},
-		controllers: {
-			viewport,
-			selection
-		}
-	});
-
-	// Command Bus
-	const commandBus = createCommandBus({
-		getters: {
-			isEditorOpen: () => editorController.isEditorOpen(),
-			getLastActiveRow: () => lastActiveRow,
-			getLastActiveCol: () => lastActiveCol,
-			getContainerHeight: () => containerHeight,
-			getConstants: () => ({ CELL_HEIGHT, CELL_WIDTH }),
-			getColumnsLength: () => columns.length
-		},
-		setters: {
-			handleCopy,
+		editor: { state: editorState, readCell, writeCell },
+		methods: {
 			triggerRedraw: () => {
 				drawHeaders();
 				drawGrid();
-			}
-		},
-		controllers: {
-			selection,
-			editor: editorController
-		}
-	});
-
-	// Input handler
-	const onKeyDown = createKeymapHandler(keymap, commandBus);
-
-	function onGridDblClick(e) {
-		const { x, y } = localXY(gridCanvas, e);
-		const { row, col } = pointToCell(x, y, scrollLeft, scrollTop, CELL_WIDTH, CELL_HEIGHT);
-		commandBus.dispatch({ type: 'OpenEditorAtFocus', payload: { row, col } });
-	}
-
-	function handleAnyDblClick(e) {
-		// Fallback: if a canvas receives a dblclick (e.g., header), open editor at current focus
-		const target = e.target;
-		if (target && target.tagName && target.tagName.toLowerCase() === 'canvas') {
-			if (!editorController.isEditorOpen()) commandBus.dispatch({ type: 'OpenEditorAtFocus' });
-		}
-	}
-
-	// Drag selection module wiring
-	const drag = createDragSelectionController({
-		getters: {
-			getSelecting: () => selecting,
-			getDragMode: () => dragMode,
-			getNumRows: () => sheet.numRows,
-			getColumnsLength: () => columns.length,
-			getContainerWidth: () => containerWidth,
-			getContainerHeight: () => containerHeight,
-			getScrollTop: () => scrollTop,
-			getScrollLeft: () => scrollLeft,
-			getLastActiveRow: () => lastActiveRow,
-			getLastActiveCol: () => lastActiveCol,
-			getAnchorRow: () => anchorRow,
-			getAnchorCol: () => anchorCol
-		},
-		setters: {
-			setSelecting: (v) => (selecting = v),
-			setDragMode: (v) => (dragMode = v),
-			setAnchorRow: (v) => (anchorRow = v),
-			setAnchorCol: (v) => (anchorCol = v),
-			setFocusRow: (v) => (focusRow = v),
-			setFocusCol: (v) => (focusCol = v),
-			setLastActiveRow: (v) => (lastActiveRow = v),
-			setLastActiveCol: (v) => (lastActiveCol = v),
-			setIsSelectionCopied: (v) => (isSelectionCopied = v)
-		},
-		methods: {
-			isEditorOpen: () => editorController.isEditorOpen(),
-			commitEditor: (save) => editorController.commitEditor(save),
+			},
 			drawHeaders: () => drawHeaders(),
 			drawGrid: () => drawGrid(),
-			getSelection: () => selection.getSelection(),
-			clampScroll: (t, l) => viewport.clampScroll(t, l),
 			localXY: (el, e) => localXY(el, e),
 			pointToCell: (x, y) => pointToCell(x, y, scrollLeft, scrollTop, CELL_WIDTH, CELL_HEIGHT),
 			xToColInHeader: (x) => xToColInHeader(x, scrollLeft, CELL_WIDTH),
@@ -268,59 +176,22 @@
 		constants: { EDGE }
 	});
 
-	// Renderers: thin wrappers that delegate to extracted modules for testability
+	const { onWheel } = viewport;
+
+	// Input handler
+	const onKeyDown = createKeymapHandler(keymap, commandBus);
+
+	// Renderers via centralized render context
+	let renderCtx;
+
 	function drawHeaders() {
-		drawHeadersImpl({
-			colHeadCanvas,
-			rowHeadCanvas,
-			containerWidth,
-			containerHeight,
-			COLUMN_HEADER_HEIGHT,
-			ROW_HEADER_WIDTH,
-			CELL_WIDTH,
-			CELL_HEIGHT,
-			columns,
-			scrollLeft,
-			scrollTop,
-			startIndexCol,
-			endIndexCol,
-			startIndexRow,
-			endIndexRow,
-			getSelection: selection.getSelection
-		});
+		if (!renderCtx) return;
+		drawHeadersImpl(renderCtx.getHeaderParams());
 	}
 
 	function drawGrid() {
-		drawGridImpl({
-			gridCanvas,
-			containerWidth,
-			containerHeight,
-			CELL_WIDTH,
-			CELL_HEIGHT,
-			startIndexCol,
-			endIndexCol,
-			startIndexRow,
-			endIndexRow,
-			visibleRowCount,
-			visibleColCount,
-			scrollLeft,
-			scrollTop,
-			readCell,
-			getSelection: selection.getSelection,
-			anchorRow,
-			anchorCol,
-			isSelectionCopied
-		});
-	}
-
-	/** Handle copy operation - sets selection border to dotted */
-	function handleCopy() {
-		const sel = selection.getSelection();
-		if (sel) {
-			isSelectionCopied = true;
-			drawHeaders();
-			drawGrid();
-		}
+		if (!renderCtx) return;
+		drawGridImpl(renderCtx.getGridParams());
 	}
 
 	// Redraw on relevant changes
@@ -349,6 +220,37 @@
 		}
 
 		const cleanupResizeObserver = viewport.setupResizeObserver(gridContainerEl);
+
+		// Initialize render context when refs available
+		renderCtx = createRenderContext({
+			gridCanvas: () => gridCanvas,
+			colHeadCanvas: () => colHeadCanvas,
+			rowHeadCanvas: () => rowHeadCanvas,
+			containerWidth: () => containerWidth,
+			containerHeight: () => containerHeight,
+			CELL_WIDTH,
+			CELL_HEIGHT,
+			COLUMN_HEADER_HEIGHT,
+			ROW_HEADER_WIDTH,
+			columns,
+			scrollLeft: () => scrollLeft,
+			scrollTop: () => scrollTop,
+			startIndexCol: () => startIndexCol,
+			endIndexCol: () => endIndexCol,
+			startIndexRow: () => startIndexRow,
+			endIndexRow: () => endIndexRow,
+			visibleRowCount: () => visibleRowCount,
+			visibleColCount: () => visibleColCount,
+			readCell,
+			getSelection: () => selection.getSelection(),
+			anchorRow: () => anchorRow,
+			anchorCol: () => anchorCol,
+			isSelectionCopied: () => isSelectionCopied
+		});
+
+		// Ensure first paint happens after render context is ready
+		drawHeaders();
+		drawGrid();
 
 		return () => {
 			cleanupResizeObserver();
@@ -379,7 +281,7 @@
 			onpointerdown={drag.onColHeadPointerDown}
 			onpointermove={drag.onColHeadPointerMove}
 			onpointerup={drag.onColHeadPointerUp}
-			ondblclick={handleAnyDblClick}
+			ondblclick={dbl.onAnyDblClick}
 			style="height: {COLUMN_HEADER_HEIGHT}px; width: 100%;"
 		></canvas>
 	</div>
@@ -395,7 +297,7 @@
 			onpointerdown={drag.onRowHeadPointerDown}
 			onpointermove={drag.onRowHeadPointerMove}
 			onpointerup={drag.onRowHeadPointerUp}
-			ondblclick={handleAnyDblClick}
+			ondblclick={dbl.onAnyDblClick}
 			style="width:{ROW_HEADER_WIDTH}px; height:100%;"
 		></canvas>
 	</div>
@@ -414,7 +316,7 @@
 			onpointerdown={drag.onGridPointerDown}
 			onpointermove={drag.onGridPointerMove}
 			onpointerup={drag.onGridPointerUp}
-			ondblclick={onGridDblClick}
+			ondblclick={dbl.onGridDblClick}
 			style="width:100%; height:100%;"
 		></canvas>
 
