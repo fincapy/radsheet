@@ -1,8 +1,8 @@
-// Drag selection module
+// Drag selection controller
 // Exports a factory that encapsulates drag state and handlers while delegating
 // mutations back to the caller via provided getters/setters to preserve Svelte reactivity.
 
-export function createDragSelection({ getters, setters, methods, refs, constants }) {
+export function createDragSelectionController({ getters, setters, methods, refs, constants }) {
 	let lastPointer = { x: 0, y: 0 };
 	let auto = { vx: 0, vy: 0, raf: null };
 

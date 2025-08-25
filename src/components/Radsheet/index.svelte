@@ -32,13 +32,14 @@
 	} from './constants.js';
 	import { drawHeaders as drawHeadersImpl } from './drawHeaders.js';
 	import { drawGrid as drawGridImpl } from './drawGrid.js';
-	import { createDragSelection } from './dragSelection.js';
+	import { createDragSelectionController } from './controllers/dragSelectionController.js';
 	import { createViewportController } from './controllers/viewportController.js';
 	import { createSelectionController } from './controllers/selectionController.js';
 	import { createCommandBus } from './commands/commandBus.js';
 	import { keymap, createKeymapHandler } from './input/keymap.js';
 	import { createEditorController } from './controllers/editorController.js';
 	import EditorOverlay from '../EditorOverlay.svelte';
+	import { localXY, pointToCell, xToColInHeader, yToRowInHeader } from './math.js';
 
 	// bump when data changes so effect repaints
 	let sheetVersion = $state(0);
@@ -51,6 +52,7 @@
 	let sheet = $state.raw(new Sheet());
 	const readCell = (r, c) => sheet.getValue(r, c);
 	const writeCell = (r, c, v) => executeWithRerender(() => sheet.setValue(r, c, v));
+	const addRows = () => executeWithRerender(() => sheet.addRows(1000));
 
 	// Viewport + layout state
 	let scrollTop = $state(0);
@@ -75,6 +77,32 @@
 	let lastActiveCol = $state(0);
 	let isSelectionCopied = $state(false); // Track if selection is copied (for dotted border)
 
+	// Metrics and derived viewport calculations
+	const totalHeight = $derived((sheetVersion, sheet.numRows) * CELL_HEIGHT);
+	const totalWidth = $derived(columns.length * CELL_WIDTH);
+
+	// Visible window (row/column indices)
+	const startIndexRow = $derived(Math.floor(scrollTop / CELL_HEIGHT));
+	const visibleRowCount = $derived(Math.ceil(containerHeight / CELL_HEIGHT) + 1);
+	const endIndexRow = $derived(
+		Math.min((sheetVersion, sheet.numRows), startIndexRow + visibleRowCount)
+	);
+
+	// Expose reactive numRows for template/props updates on addRows()
+	const numRowsView = $derived((sheetVersion, sheet.numRows));
+	const startIndexCol = $derived(Math.floor(scrollLeft / CELL_WIDTH));
+	const visibleColCount = $derived(Math.ceil(containerWidth / CELL_WIDTH) + 1);
+	const endIndexCol = $derived(Math.min(columns.length, startIndexCol + visibleColCount));
+
+	// Editor state
+	let editorState = $state({
+		open: false,
+		row: 0,
+		col: 0,
+		value: '',
+		seedText: null
+	});
+
 	onMount(() => {
 		// Expose sheet API for e2e tests
 		if (typeof window !== 'undefined') {
@@ -92,17 +120,6 @@
 		if (typeof window !== 'undefined') {
 			if (window.__sheet === sheet) delete window.__sheet;
 		}
-	});
-
-	// autoscroll while dragging near edges handled in dragSelection module
-
-	// Editor state
-	let editorState = $state({
-		open: false,
-		row: 0,
-		col: 0,
-		value: '',
-		seedText: null
 	});
 
 	// Viewport controller
@@ -190,57 +207,9 @@
 	// Input handler
 	const onKeyDown = createKeymapHandler(keymap, commandBus);
 
-	// Metrics and derived viewport calculations
-	const totalHeight = $derived((sheetVersion, sheet.numRows) * CELL_HEIGHT);
-	const totalWidth = $derived(columns.length * CELL_WIDTH);
-
-	// Visible window (row/column indices)
-	const startIndexRow = $derived(Math.floor(scrollTop / CELL_HEIGHT));
-	const visibleRowCount = $derived(Math.ceil(containerHeight / CELL_HEIGHT) + 1);
-	const endIndexRow = $derived(
-		Math.min((sheetVersion, sheet.numRows), startIndexRow + visibleRowCount)
-	);
-
-	// Expose reactive numRows for template/props updates on addRows()
-	const numRowsView = $derived((sheetVersion, sheet.numRows));
-
-	const startIndexCol = $derived(Math.floor(scrollLeft / CELL_WIDTH));
-	const visibleColCount = $derived(Math.ceil(containerWidth / CELL_WIDTH) + 1);
-	const endIndexCol = $derived(Math.min(columns.length, startIndexCol + visibleColCount));
-
-	// Selection helper (compute on demand)
-	function getSelection() {
-		if (anchorRow == null || focusRow == null) return null;
-		const r1 = Math.max(0, Math.min(anchorRow, focusRow));
-		const r2 = Math.min(sheet.numRows - 1, Math.max(anchorRow, focusRow));
-		const c1 = Math.max(0, Math.min(anchorCol, focusCol));
-		const c2 = Math.min(columns.length - 1, Math.max(anchorCol, focusCol));
-		return { r1, r2, c1, c2 };
-	}
-
-	// Helpers: local pointer coordinates and pixel -> cell mappers
-	function localXY(el, e) {
-		const r = el.getBoundingClientRect();
-		return { x: e.clientX - r.left, y: e.clientY - r.top };
-	}
-
-	// map pixel → cell
-	function pointToCell(x, y) {
-		const col = Math.floor((x + scrollLeft) / CELL_WIDTH);
-		const adjustedY = y + scrollTop;
-		const row = Math.max(0, Math.floor(adjustedY / CELL_HEIGHT));
-		return { row, col };
-	}
-	function xToColInHeader(x) {
-		return Math.floor((x + scrollLeft) / CELL_WIDTH);
-	}
-	function yToRowInHeader(y) {
-		return Math.floor((y + scrollTop) / CELL_HEIGHT);
-	}
-
 	function onGridDblClick(e) {
 		const { x, y } = localXY(gridCanvas, e);
-		const { row, col } = pointToCell(x, y);
+		const { row, col } = pointToCell(x, y, scrollLeft, scrollTop, CELL_WIDTH, CELL_HEIGHT);
 		commandBus.dispatch({ type: 'OpenEditorAtFocus', payload: { row, col } });
 	}
 
@@ -253,7 +222,7 @@
 	}
 
 	// Drag selection module wiring
-	const drag = createDragSelection({
+	const drag = createDragSelectionController({
 		getters: {
 			getSelecting: () => selecting,
 			getDragMode: () => dragMode,
@@ -287,9 +256,9 @@
 			getSelection: () => selection.getSelection(),
 			clampScroll: (t, l) => viewport.clampScroll(t, l),
 			localXY: (el, e) => localXY(el, e),
-			pointToCell: (x, y) => pointToCell(x, y),
-			xToColInHeader: (x) => xToColInHeader(x),
-			yToRowInHeader: (y) => yToRowInHeader(y)
+			pointToCell: (x, y) => pointToCell(x, y, scrollLeft, scrollTop, CELL_WIDTH, CELL_HEIGHT),
+			xToColInHeader: (x) => xToColInHeader(x, scrollLeft, CELL_WIDTH),
+			yToRowInHeader: (y) => yToRowInHeader(y, scrollTop, CELL_HEIGHT)
 		},
 		refs: {
 			getGridCanvas: () => gridCanvas,
@@ -298,18 +267,6 @@
 		},
 		constants: { EDGE }
 	});
-
-	const {
-		onGridPointerDown,
-		onGridPointerMove,
-		onGridPointerUp,
-		onColHeadPointerDown,
-		onColHeadPointerMove,
-		onColHeadPointerUp,
-		onRowHeadPointerDown,
-		onRowHeadPointerMove,
-		onRowHeadPointerUp
-	} = drag;
 
 	// Renderers: thin wrappers that delegate to extracted modules for testability
 	function drawHeaders() {
@@ -329,7 +286,7 @@
 			endIndexCol,
 			startIndexRow,
 			endIndexRow,
-			getSelection
+			getSelection: selection.getSelection
 		});
 	}
 
@@ -349,7 +306,7 @@
 			scrollLeft,
 			scrollTop,
 			readCell,
-			getSelection,
+			getSelection: selection.getSelection,
 			anchorRow,
 			anchorCol,
 			isSelectionCopied
@@ -366,18 +323,13 @@
 		}
 	}
 
-	// Redraw on relevant changes — explicitly read deps so $effect tracks them
-	// This is the complete list of reactive inputs that cause a redraw:
-	// - Selection drivers: anchorRow/Col, focusRow/Col
-	// - Viewport positions/sizes: scrollTop/Left, containerWidth/Height
-	// - Visible index windows: startIndexRow/Col, endIndexRow/Col
-	// - Data version: sheetVersion
+	// Redraw on relevant changes
 	$effect(() => {
 		anchorRow;
 		anchorCol;
 		focusRow;
-		focusCol; // depend on raw selection drivers
-		isSelectionCopied; // depend on copy state
+		focusCol;
+		isSelectionCopied;
 		scrollTop;
 		scrollLeft;
 		containerWidth;
@@ -391,10 +343,23 @@
 		drawGrid();
 	});
 
-	function addRows() {
-		sheet.addRows(1000);
-		sheetVersion++;
-	}
+	onMount(() => {
+		if (typeof window !== 'undefined') {
+			window.__sheet = sheet;
+		}
+
+		const cleanupResizeObserver = viewport.setupResizeObserver(gridContainerEl);
+
+		return () => {
+			cleanupResizeObserver();
+		};
+	});
+
+	onDestroy(() => {
+		if (typeof window !== 'undefined') {
+			if (window.__sheet === sheet) delete window.__sheet;
+		}
+	});
 </script>
 
 <svelte:window onkeydown={onKeyDown} />
@@ -411,9 +376,9 @@
 		<canvas
 			class="canvas absolute top-0 left-0"
 			bind:this={colHeadCanvas}
-			onpointerdown={onColHeadPointerDown}
-			onpointermove={onColHeadPointerMove}
-			onpointerup={onColHeadPointerUp}
+			onpointerdown={drag.onColHeadPointerDown}
+			onpointermove={drag.onColHeadPointerMove}
+			onpointerup={drag.onColHeadPointerUp}
 			ondblclick={handleAnyDblClick}
 			style="height: {COLUMN_HEADER_HEIGHT}px; width: 100%;"
 		></canvas>
@@ -427,9 +392,9 @@
 		<canvas
 			class="canvas absolute top-0 left-0"
 			bind:this={rowHeadCanvas}
-			onpointerdown={onRowHeadPointerDown}
-			onpointermove={onRowHeadPointerMove}
-			onpointerup={onRowHeadPointerUp}
+			onpointerdown={drag.onRowHeadPointerDown}
+			onpointermove={drag.onRowHeadPointerMove}
+			onpointerup={drag.onRowHeadPointerUp}
 			ondblclick={handleAnyDblClick}
 			style="width:{ROW_HEADER_WIDTH}px; height:100%;"
 		></canvas>
@@ -446,9 +411,9 @@
 		<canvas
 			class="canvas absolute top-0 left-0 z-10"
 			bind:this={gridCanvas}
-			onpointerdown={onGridPointerDown}
-			onpointermove={onGridPointerMove}
-			onpointerup={onGridPointerUp}
+			onpointerdown={drag.onGridPointerDown}
+			onpointermove={drag.onGridPointerMove}
+			onpointerup={drag.onGridPointerUp}
 			ondblclick={onGridDblClick}
 			style="width:100%; height:100%;"
 		></canvas>
