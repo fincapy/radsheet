@@ -34,6 +34,7 @@
 	import { drawGrid as drawGridImpl } from './drawGrid.js';
 	import { createDragSelection } from './dragSelection.js';
 	import { createViewportController } from './controllers/viewportController.js';
+	import { createSelectionController } from './controllers/selectionController.js';
 
 	// bump when data changes so effect repaints
 	let sheetVersion = $state(0);
@@ -95,8 +96,7 @@
 	/** Open the inline editor at the given cell. Optionally seed with initial text. */
 	function openEditorAt(row, col, seedText = null) {
 		viewport.scrollCellIntoView(row, col);
-		anchorRow = focusRow = lastActiveRow = row;
-		anchorCol = focusCol = lastActiveCol = col;
+		selection.setCell(row, col);
 		const current = String(readCell(row, col) ?? '');
 		editor.open = true;
 		editor.row = row;
@@ -120,8 +120,7 @@
 		if (save) {
 			writeCell(row, col, value);
 		}
-		anchorRow = focusRow = lastActiveRow = row;
-		anchorCol = focusCol = lastActiveCol = col;
+		selection.setCell(row, col);
 		drawHeaders();
 		drawGrid();
 	}
@@ -132,27 +131,27 @@
 			e.stopPropagation();
 			commitEditor(true);
 			// move down like spreadsheets
-			moveFocusBy(1, 0);
+			selection.moveFocusBy(1, 0);
 		} else if (e.key === 'ArrowRight') {
 			e.preventDefault();
 			e.stopPropagation();
 			commitEditor(true);
-			moveFocusBy(0, 1);
+			selection.moveFocusBy(0, 1);
 		} else if (e.key === 'ArrowLeft') {
 			e.preventDefault();
 			e.stopPropagation();
 			commitEditor(true);
-			moveFocusBy(0, -1);
+			selection.moveFocusBy(0, -1);
 		} else if (e.key === 'ArrowUp') {
 			e.preventDefault();
 			e.stopPropagation();
 			commitEditor(true);
-			moveFocusBy(-1, 0);
+			selection.moveFocusBy(-1, 0);
 		} else if (e.key === 'ArrowDown') {
 			e.preventDefault();
 			e.stopPropagation();
 			commitEditor(true);
-			moveFocusBy(1, 0);
+			selection.moveFocusBy(1, 0);
 		} else if (e.key === 'Escape') {
 			e.preventDefault();
 			e.stopPropagation();
@@ -162,7 +161,7 @@
 			e.stopPropagation();
 			const dir = e.shiftKey ? -1 : 1;
 			commitEditor(true);
-			moveFocusBy(0, dir);
+			selection.moveFocusBy(0, dir);
 		}
 	}
 
@@ -185,6 +184,32 @@
 		}
 	});
 	const { onWheel } = viewport;
+
+	// Selection controller
+	const selection = createSelectionController({
+		getters: {
+			getAnchorRow: () => anchorRow,
+			getAnchorCol: () => anchorCol,
+			getFocusRow: () => focusRow,
+			getFocusCol: () => focusCol,
+			getLastActiveRow: () => lastActiveRow,
+			getLastActiveCol: () => lastActiveCol,
+			getSheetNumRows: () => sheet.numRows,
+			getColumnsLength: () => columns.length
+		},
+		setters: {
+			setAnchorRow: (v) => (anchorRow = v),
+			setAnchorCol: (v) => (anchorCol = v),
+			setFocusRow: (v) => (focusRow = v),
+			setFocusCol: (v) => (focusCol = v),
+			setLastActiveRow: (v) => (lastActiveRow = v),
+			setLastActiveCol: (v) => (lastActiveCol = v),
+			setIsSelectionCopied: (v) => (isSelectionCopied = v)
+		},
+		controllers: {
+			viewport
+		}
+	});
 
 	// Metrics and derived viewport calculations
 	const totalHeight = $derived((sheetVersion, sheet.numRows) * CELL_HEIGHT);
@@ -280,7 +305,7 @@
 			commitEditor: (save) => commitEditor(save),
 			drawHeaders: () => drawHeaders(),
 			drawGrid: () => drawGrid(),
-			getSelection: () => getSelection(),
+			getSelection: () => selection.getSelection(),
 			clampScroll: (t, l) => viewport.clampScroll(t, l),
 			localXY: (el, e) => localXY(el, e),
 			pointToCell: (x, y) => pointToCell(x, y),
@@ -376,10 +401,10 @@
 				// Shift+Arrow: Extend selection
 				if (e.ctrlKey) {
 					// Ctrl+Shift+Arrow: Extend selection to edge of data
-					extendSelectionToEdge(e.key);
+					selection.extendSelectionToEdge(e.key);
 				} else {
 					// Shift+Arrow: Extend selection by one cell
-					extendSelectionBy(e.key);
+					selection.extendSelectionBy(e.key);
 				}
 			} else {
 				// Regular arrow: Move focus (clear selection)
@@ -390,7 +415,7 @@
 					ArrowRight: [0, 1]
 				};
 				const [dr, dc] = nav[e.key];
-				moveFocusBy(dr, dc);
+				selection.moveFocusBy(dr, dc);
 			}
 			return;
 		}
@@ -411,93 +436,14 @@
 		};
 		if (e.key in nav) {
 			const [dr, dc] = nav[e.key];
-			moveFocusBy(dr, dc);
+			selection.moveFocusBy(dr, dc);
 			e.preventDefault();
 		}
-	}
-	function moveFocusBy(dr, dc) {
-		let r = Math.min(Math.max(lastActiveRow + dr, 0), sheet.numRows - 1);
-		let c = Math.min(Math.max(lastActiveCol + dc, 0), columns.length - 1);
-		anchorRow = focusRow = lastActiveRow = r;
-		anchorCol = focusCol = lastActiveCol = c;
-		isSelectionCopied = false; // Reset copied state when selection changes
-		viewport.scrollCellIntoView(r, c);
-		drawHeaders();
-		drawGrid();
-	}
-
-	/** Extend selection by one cell in the specified direction */
-	function extendSelectionBy(key) {
-		// If no selection exists, create one with current cell as anchor
-		if (anchorRow === null || anchorCol === null) {
-			anchorRow = lastActiveRow;
-			anchorCol = lastActiveCol;
-		}
-
-		const nav = {
-			ArrowUp: [-1, 0],
-			ArrowDown: [1, 0],
-			ArrowLeft: [0, -1],
-			ArrowRight: [0, 1]
-		};
-
-		const [dr, dc] = nav[key];
-		let newFocusRow = Math.min(Math.max(focusRow + dr, 0), sheet.numRows - 1);
-		let newFocusCol = Math.min(Math.max(focusCol + dc, 0), columns.length - 1);
-
-		focusRow = newFocusRow;
-		focusCol = newFocusCol;
-		lastActiveRow = newFocusRow;
-		lastActiveCol = newFocusCol;
-
-		viewport.scrollCellIntoView(newFocusRow, newFocusCol);
-		drawHeaders();
-		drawGrid();
-	}
-
-	/** Extend selection to the edge of data in the specified direction */
-	function extendSelectionToEdge(key) {
-		// If no selection exists, create one with current cell as anchor
-		if (anchorRow === null || anchorCol === null) {
-			anchorRow = lastActiveRow;
-			anchorCol = lastActiveCol;
-		}
-
-		let newFocusRow = focusRow;
-		let newFocusCol = focusCol;
-
-		switch (key) {
-			case 'ArrowUp':
-				// Find the topmost row with data or go to row 0
-				newFocusRow = 0;
-				break;
-			case 'ArrowDown':
-				// Find the bottommost row with data or go to last row
-				newFocusRow = sheet.numRows - 1;
-				break;
-			case 'ArrowLeft':
-				// Find the leftmost column with data or go to column 0
-				newFocusCol = 0;
-				break;
-			case 'ArrowRight':
-				// Find the rightmost column with data or go to last column
-				newFocusCol = columns.length - 1;
-				break;
-		}
-
-		focusRow = newFocusRow;
-		focusCol = newFocusCol;
-		lastActiveRow = newFocusRow;
-		lastActiveCol = newFocusCol;
-
-		viewport.scrollCellIntoView(newFocusRow, newFocusCol);
-		drawHeaders();
-		drawGrid();
 	}
 
 	/** Handle copy operation - sets selection border to dotted */
 	function handleCopy() {
-		const sel = getSelection();
+		const sel = selection.getSelection();
 		if (sel) {
 			isSelectionCopied = true;
 			drawHeaders();
