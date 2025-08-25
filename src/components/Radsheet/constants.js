@@ -7,8 +7,8 @@
  * - keep `Radsheet.svelte` focused on orchestration and state
  */
 
-export const CELL_HEIGHT = 30; // px height for each grid row
-export const CELL_WIDTH = 120; // px width for each grid column
+export const CELL_HEIGHT = 22; // px height for each grid row
+export const CELL_WIDTH = 100; // px width for each grid column
 export const ROW_HEADER_WIDTH = 50; // px width of row index gutter
 export const COLUMN_HEADER_HEIGHT = 30; // px height of column header bar
 export const SCROLLBAR_SIZE = 12; // px size of custom scrollbars

@@ -1,5 +1,5 @@
 <script>
-	import Radsheet from '../components/Radsheet.svelte';
+	import Radsheet from '../components/Radsheet/index.svelte';
 </script>
 
 <main class="flex h-screen w-full flex-col items-center justify-center">

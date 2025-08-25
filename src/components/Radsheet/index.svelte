@@ -1,8 +1,8 @@
 <script>
-	import HorizontalScrollbar from './HorizontalScrollbar.svelte';
-	import VerticalScrollbar from './VerticalScrollbar.svelte';
-	import { Sheet } from '../domain/sheet/sheet.js';
-	import { columns } from '../domain/constants/columns.js';
+	import HorizontalScrollbar from '../HorizontalScrollbar.svelte';
+	import VerticalScrollbar from '../VerticalScrollbar.svelte';
+	import { Sheet } from '../../domain/sheet/sheet.js';
+	import { columns } from '../../domain/constants/columns.js';
 	import { onMount, onDestroy } from 'svelte';
 	/**
 	 * Radsheet
@@ -29,9 +29,9 @@
 		COLUMN_HEADER_HEIGHT,
 		SCROLLBAR_SIZE,
 		EDGE
-	} from './radsheet/constants.js';
-	import { drawHeaders as drawHeadersImpl } from './radsheet/drawHeaders.js';
-	import { drawGrid as drawGridImpl } from './radsheet/drawGrid.js';
+	} from './constants.js';
+	import { drawHeaders as drawHeadersImpl } from './drawHeaders.js';
+	import { drawGrid as drawGridImpl } from './drawGrid.js';
 
 	// Domain model (source of truth for cell values)
 	let sheet = $state.raw(new Sheet());
@@ -82,26 +82,6 @@
 	// Editor overlay state
 	let editor = $state({ open: false, row: 0, col: 0, value: '' });
 	let inputEl = $state(null);
-
-	// Persistence (optional). These are referenced in the template behind a runtime guard.
-	// Define minimal defaults so the template compiles even when persistence is not wired.
-	let isPersisting = $state(false);
-	let lastPersistTime = $state(0);
-	function saveToDisk() {
-		// If the Sheet exposes a chunkStore with a persist API, call it; otherwise no-op.
-		try {
-			if (sheet?.chunkStore?.persist) {
-				isPersisting = true;
-				sheet.chunkStore.persist().finally(() => {
-					isPersisting = false;
-					lastPersistTime = Date.now();
-				});
-			}
-		} catch (err) {
-			isPersisting = false;
-		}
-	}
-
 	onMount(() => {
 		// Expose sheet API for e2e tests
 		if (typeof window !== 'undefined') {
