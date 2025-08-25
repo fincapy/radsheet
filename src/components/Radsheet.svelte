@@ -173,39 +173,40 @@
 	function onEditorKeyDown(e) {
 		if (e.key === 'Enter') {
 			e.preventDefault();
+			e.stopPropagation();
 			commitEditor(true);
 			// move down like spreadsheets
 			moveFocusBy(1, 0);
-			openEditorAt(lastActiveRow, lastActiveCol);
 		} else if (e.key === 'ArrowRight') {
 			e.preventDefault();
+			e.stopPropagation();
 			commitEditor(true);
 			moveFocusBy(0, 1);
-			openEditorAt(lastActiveRow, lastActiveCol);
 		} else if (e.key === 'ArrowLeft') {
 			e.preventDefault();
+			e.stopPropagation();
 			commitEditor(true);
 			moveFocusBy(0, -1);
-			openEditorAt(lastActiveRow, lastActiveCol);
 		} else if (e.key === 'ArrowUp') {
 			e.preventDefault();
+			e.stopPropagation();
 			commitEditor(true);
 			moveFocusBy(-1, 0);
-			openEditorAt(lastActiveRow, lastActiveCol);
 		} else if (e.key === 'ArrowDown') {
 			e.preventDefault();
+			e.stopPropagation();
 			commitEditor(true);
 			moveFocusBy(1, 0);
-			openEditorAt(lastActiveRow, lastActiveCol);
 		} else if (e.key === 'Escape') {
 			e.preventDefault();
+			e.stopPropagation();
 			commitEditor(false);
 		} else if (e.key === 'Tab') {
 			e.preventDefault();
+			e.stopPropagation();
 			const dir = e.shiftKey ? -1 : 1;
 			commitEditor(true);
 			moveFocusBy(0, dir);
-			openEditorAt(lastActiveRow, lastActiveCol);
 		}
 	}
 
@@ -491,8 +492,8 @@
 	function onKeyDown(e) {
 		if (editor.open) return; // let input handle keys
 		if (e.key === 'Enter') {
-			openEditorAt(lastActiveRow, lastActiveCol);
 			e.preventDefault();
+			openEditorAt(lastActiveRow, lastActiveCol);
 			return;
 		}
 		if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {

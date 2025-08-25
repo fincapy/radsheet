@@ -95,7 +95,17 @@ test.describe('UI Interactions', () => {
 			await editor.fill('first cell');
 			await editor.press('Tab');
 
-			// Should move to next cell and open editor
+			// Editor should close; selection moves to cell below
+			await expect(editor).not.toBeVisible();
+
+			// Wait a bit for the value to be committed
+			await page.waitForTimeout(100);
+
+			// Value should be saved in original cell (row 0, col 0)
+			expect(await getCell(page, 0, 0)).toBe('first cell');
+
+			// Press Enter again to open editor at the next cell (row 1, col 0)
+			await page.keyboard.press('Enter');
 			const newEditor = page.locator('.editor');
 			await expect(newEditor).toBeVisible();
 			await expect(newEditor).toHaveValue('');
@@ -113,7 +123,17 @@ test.describe('UI Interactions', () => {
 			const editor = page.locator('.editor');
 			await editor.press('Shift+Tab');
 
-			// Should move to first cell and open editor
+			// Editor should close; selection moves to cell below
+			await expect(editor).not.toBeVisible();
+
+			// Wait a bit for the value to be committed
+			await page.waitForTimeout(100);
+
+			// Value should be saved in original cell (row 0, col 0)
+			expect(await getCell(page, 0, 1)).toBe('second');
+
+			// Press Enter again to open editor at the next cell (row 1, col 0)
+			await page.keyboard.press('Enter');
 			const newEditor = page.locator('.editor');
 			await expect(newEditor).toBeVisible();
 			await expect(newEditor).toHaveValue('first');
