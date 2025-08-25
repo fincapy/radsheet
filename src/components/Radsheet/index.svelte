@@ -35,6 +35,10 @@
 	import { createDragSelection } from './dragSelection.js';
 	import { createViewportController } from './controllers/viewportController.js';
 	import { createSelectionController } from './controllers/selectionController.js';
+	import { createCommandBus } from './commands/commandBus.js';
+	import { keymap, createKeymapHandler } from './input/keymap.js';
+	import { createEditorController } from './controllers/editorController.js';
+	import EditorOverlay from '../EditorOverlay.svelte';
 
 	// bump when data changes so effect repaints
 	let sheetVersion = $state(0);
@@ -71,9 +75,6 @@
 	let lastActiveCol = $state(0);
 	let isSelectionCopied = $state(false); // Track if selection is copied (for dotted border)
 
-	// Editor overlay state
-	let editor = $state({ open: false, row: 0, col: 0, value: '' });
-	let inputEl = $state(null);
 	onMount(() => {
 		// Expose sheet API for e2e tests
 		if (typeof window !== 'undefined') {
@@ -93,79 +94,16 @@
 		}
 	});
 
-	/** Open the inline editor at the given cell. Optionally seed with initial text. */
-	function openEditorAt(row, col, seedText = null) {
-		viewport.scrollCellIntoView(row, col);
-		selection.setCell(row, col);
-		const current = String(readCell(row, col) ?? '');
-		editor.open = true;
-		editor.row = row;
-		editor.col = col;
-		editor.value = seedText != null ? seedText : current;
-		queueMicrotask(() => {
-			if (!inputEl) return;
-			inputEl.focus({ preventScroll: true });
-			if (seedText == null)
-				inputEl.select(); // replace existing by default
-			else inputEl.setSelectionRange(editor.value.length, editor.value.length);
-		});
-		drawHeaders();
-		drawGrid();
-	}
-	/** Commit or cancel the current edit, then redraw. */
-	function commitEditor(save) {
-		if (!editor.open) return;
-		const { row, col, value } = editor;
-		editor.open = false;
-		if (save) {
-			writeCell(row, col, value);
-		}
-		selection.setCell(row, col);
-		drawHeaders();
-		drawGrid();
-	}
-	/** Handle editing navigation keys and commit/cancel. */
-	function onEditorKeyDown(e) {
-		if (e.key === 'Enter') {
-			e.preventDefault();
-			e.stopPropagation();
-			commitEditor(true);
-			// move down like spreadsheets
-			selection.moveFocusBy(1, 0);
-		} else if (e.key === 'ArrowRight') {
-			e.preventDefault();
-			e.stopPropagation();
-			commitEditor(true);
-			selection.moveFocusBy(0, 1);
-		} else if (e.key === 'ArrowLeft') {
-			e.preventDefault();
-			e.stopPropagation();
-			commitEditor(true);
-			selection.moveFocusBy(0, -1);
-		} else if (e.key === 'ArrowUp') {
-			e.preventDefault();
-			e.stopPropagation();
-			commitEditor(true);
-			selection.moveFocusBy(-1, 0);
-		} else if (e.key === 'ArrowDown') {
-			e.preventDefault();
-			e.stopPropagation();
-			commitEditor(true);
-			selection.moveFocusBy(1, 0);
-		} else if (e.key === 'Escape') {
-			e.preventDefault();
-			e.stopPropagation();
-			commitEditor(false);
-		} else if (e.key === 'Tab') {
-			e.preventDefault();
-			e.stopPropagation();
-			const dir = e.shiftKey ? -1 : 1;
-			commitEditor(true);
-			selection.moveFocusBy(0, dir);
-		}
-	}
-
 	// autoscroll while dragging near edges handled in dragSelection module
+
+	// Editor state
+	let editorState = $state({
+		open: false,
+		row: 0,
+		col: 0,
+		value: '',
+		seedText: null
+	});
 
 	// Viewport controller
 	const viewport = createViewportController({
@@ -210,6 +148,47 @@
 			viewport
 		}
 	});
+
+	// Editor Controller
+	const editorController = createEditorController({
+		editorState,
+		getters: {
+			readCell
+		},
+		setters: {
+			writeCell
+		},
+		controllers: {
+			viewport,
+			selection
+		}
+	});
+
+	// Command Bus
+	const commandBus = createCommandBus({
+		getters: {
+			isEditorOpen: () => editorController.isEditorOpen(),
+			getLastActiveRow: () => lastActiveRow,
+			getLastActiveCol: () => lastActiveCol,
+			getContainerHeight: () => containerHeight,
+			getConstants: () => ({ CELL_HEIGHT, CELL_WIDTH }),
+			getColumnsLength: () => columns.length
+		},
+		setters: {
+			handleCopy,
+			triggerRedraw: () => {
+				drawHeaders();
+				drawGrid();
+			}
+		},
+		controllers: {
+			selection,
+			editor: editorController
+		}
+	});
+
+	// Input handler
+	const onKeyDown = createKeymapHandler(keymap, commandBus);
 
 	// Metrics and derived viewport calculations
 	const totalHeight = $derived((sheetVersion, sheet.numRows) * CELL_HEIGHT);
@@ -262,14 +241,14 @@
 	function onGridDblClick(e) {
 		const { x, y } = localXY(gridCanvas, e);
 		const { row, col } = pointToCell(x, y);
-		openEditorAt(row, col);
+		commandBus.dispatch({ type: 'OpenEditorAtFocus', payload: { row, col } });
 	}
 
 	function handleAnyDblClick(e) {
 		// Fallback: if a canvas receives a dblclick (e.g., header), open editor at current focus
 		const target = e.target;
 		if (target && target.tagName && target.tagName.toLowerCase() === 'canvas') {
-			if (!editor.open) openEditorAt(lastActiveRow, lastActiveCol);
+			if (!editorController.isEditorOpen()) commandBus.dispatch({ type: 'OpenEditorAtFocus' });
 		}
 	}
 
@@ -301,8 +280,8 @@
 			setIsSelectionCopied: (v) => (isSelectionCopied = v)
 		},
 		methods: {
-			isEditorOpen: () => editor.open,
-			commitEditor: (save) => commitEditor(save),
+			isEditorOpen: () => editorController.isEditorOpen(),
+			commitEditor: (save) => editorController.commitEditor(save),
 			drawHeaders: () => drawHeaders(),
 			drawGrid: () => drawGrid(),
 			getSelection: () => selection.getSelection(),
@@ -375,70 +354,6 @@
 			anchorCol,
 			isSelectionCopied
 		});
-	}
-
-	// Keyboard: Enter to edit; type to start editing; arrows to move selection
-	function onKeyDown(e) {
-		if (editor.open) return; // let input handle keys
-		if (e.key === 'Enter') {
-			e.preventDefault();
-			openEditorAt(lastActiveRow, lastActiveCol);
-			return;
-		}
-		if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
-			// start typing replaces content
-			openEditorAt(lastActiveRow, lastActiveCol, e.key);
-			e.preventDefault();
-			return;
-		}
-
-		// Handle arrow keys with shift and ctrl modifiers
-		const arrowKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
-		if (arrowKeys.includes(e.key)) {
-			e.preventDefault();
-
-			if (e.shiftKey) {
-				// Shift+Arrow: Extend selection
-				if (e.ctrlKey) {
-					// Ctrl+Shift+Arrow: Extend selection to edge of data
-					selection.extendSelectionToEdge(e.key);
-				} else {
-					// Shift+Arrow: Extend selection by one cell
-					selection.extendSelectionBy(e.key);
-				}
-			} else {
-				// Regular arrow: Move focus (clear selection)
-				const nav = {
-					ArrowUp: [-1, 0],
-					ArrowDown: [1, 0],
-					ArrowLeft: [0, -1],
-					ArrowRight: [0, 1]
-				};
-				const [dr, dc] = nav[e.key];
-				selection.moveFocusBy(dr, dc);
-			}
-			return;
-		}
-
-		// Handle copy (Ctrl+C)
-		if (e.ctrlKey && e.key === 'c') {
-			e.preventDefault();
-			handleCopy();
-			return;
-		}
-
-		// Handle other navigation keys
-		const nav = {
-			PageUp: [-visibleRowCount + 1, 0],
-			PageDown: [visibleRowCount - 1, 0],
-			Home: [0, -lastActiveCol],
-			End: [0, columns.length]
-		};
-		if (e.key in nav) {
-			const [dr, dc] = nav[e.key];
-			selection.moveFocusBy(dr, dc);
-			e.preventDefault();
-		}
 	}
 
 	/** Handle copy operation - sets selection border to dotted */
@@ -538,18 +453,14 @@
 			style="width:100%; height:100%;"
 		></canvas>
 
-		{#if editor.open}
-			<input
-				class="editor absolute z-20 border-2 border-blue-500 bg-white px-2 text-sm outline-none"
-				bind:this={inputEl}
-				style="left: {editor.col * CELL_WIDTH - scrollLeft}px; top: {editor.row * CELL_HEIGHT -
-					scrollTop}px; width: {CELL_WIDTH}px; height: {CELL_HEIGHT}px;"
-				value={editor.value}
-				oninput={(e) => (editor.value = e.currentTarget.value)}
-				onkeydown={(e) => onEditorKeyDown(e)}
-				onblur={() => commitEditor(true)}
-			/>
-		{/if}
+		<EditorOverlay
+			{editorState}
+			commandBus={{ dispatch: commandBus.dispatch, handleKeyDown: onKeyDown }}
+			{CELL_WIDTH}
+			{CELL_HEIGHT}
+			{scrollLeft}
+			{scrollTop}
+		/>
 	</div>
 
 	<!-- Vertical scrollbar -->
@@ -597,8 +508,5 @@
 	.canvas {
 		display: block;
 		touch-action: none;
-	}
-	.editor {
-		box-sizing: border-box;
 	}
 </style>
