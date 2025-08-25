@@ -32,6 +32,7 @@
 	} from './constants.js';
 	import { drawHeaders as drawHeadersImpl } from './drawHeaders.js';
 	import { drawGrid as drawGridImpl } from './drawGrid.js';
+	import { createDragSelection } from './dragSelection.js';
 
 	// Domain model (source of truth for cell values)
 	let sheet = $state.raw(new Sheet());
@@ -191,9 +192,7 @@
 		}
 	}
 
-	// autoscroll while dragging near edges
-	let lastPointer = { x: 0, y: 0 };
-	let auto = { vx: 0, vy: 0, raf: null };
+	// autoscroll while dragging near edges handled in dragSelection module
 
 	// Metrics and derived viewport calculations
 	const totalHeight = $derived((sheetVersion, sheet.numRows) * CELL_HEIGHT);
@@ -257,135 +256,10 @@
 		return Math.floor((y + scrollTop) / CELL_HEIGHT);
 	}
 
-	/** Begin selection drag. kind: 'grid' | 'row' | 'col' */
-	function beginSelection(kind, row, col, e) {
-		if (editor.open) commitEditor(true); // click elsewhere commits
-		dragMode = kind; // 'grid' | 'row' | 'col'
-		if (e.shiftKey) {
-			anchorRow = lastActiveRow;
-			anchorCol = lastActiveCol;
-		} else {
-			anchorRow = row;
-			anchorCol = col;
-		}
-		// initialize focus depending on mode
-		if (kind === 'row') {
-			focusRow = row;
-			anchorCol = 0;
-			focusCol = columns.length - 1;
-		} else if (kind === 'col') {
-			focusCol = col;
-			anchorRow = 0;
-			focusRow = sheet.numRows - 1;
-		} else {
-			focusRow = row;
-			focusCol = col;
-		}
-		isSelectionCopied = false; // Reset copied state when starting new selection
-		selecting = true;
-		drawHeaders();
-		drawGrid();
-	}
-
-	const clamp = (v, a, b) => Math.min(Math.max(v, a), b);
-
-	/** Update the moving end of selection to the given row/col. */
-	function updateSelectionTo(row, col) {
-		if (!selecting) return;
-		if (dragMode === 'row') {
-			focusRow = clamp(row, 0, sheet.numRows - 1);
-			focusCol = columns.length - 1; // stick to full width
-		} else if (dragMode === 'col') {
-			focusCol = clamp(col, 0, columns.length - 1);
-			focusRow = sheet.numRows - 1; // stick to full height
-		} else {
-			focusRow = clamp(row, 0, sheet.numRows - 1);
-			focusCol = clamp(col, 0, columns.length - 1);
-		}
-		drawHeaders();
-		drawGrid();
-	}
-
-	/** Finish selection drag and finalize active cell. */
-	function endSelection() {
-		selecting = false;
-		const sel = getSelection();
-		if (sel) {
-			// After drag selection, keep the "active" cell at the original anchor
-			// so arrow navigation starts from the initially clicked cell.
-			lastActiveRow = anchorRow;
-			lastActiveCol = anchorCol;
-		}
-		stopAutoScroll();
-		dragMode = null;
-		drawHeaders();
-		drawGrid();
-	}
-
-	// pointer handlers - GRID
-	function onGridPointerDown(e) {
-		gridCanvas.setPointerCapture(e.pointerId);
-		const { x, y } = localXY(gridCanvas, e);
-		lastPointer = { x, y };
-		const { row, col } = pointToCell(x, y);
-		beginSelection('grid', row, col, e);
-	}
-	function onGridPointerMove(e) {
-		if (!selecting) return;
-		const { x, y } = localXY(gridCanvas, e);
-		lastPointer = { x, y };
-		const { row, col } = pointToCell(x, y);
-		updateSelectionTo(row, col);
-		updateAutoScroll(x, y);
-	}
-	function onGridPointerUp(e) {
-		gridCanvas.releasePointerCapture(e.pointerId);
-		endSelection();
-	}
 	function onGridDblClick(e) {
 		const { x, y } = localXY(gridCanvas, e);
 		const { row, col } = pointToCell(x, y);
 		openEditorAt(row, col);
-	}
-
-	// pointer handlers - COLUMN HEADER
-	function onColHeadPointerDown(e) {
-		colHeadCanvas.setPointerCapture(e.pointerId);
-		const { x } = localXY(colHeadCanvas, e);
-		lastPointer = { x, y: 0 };
-		const col = xToColInHeader(x);
-		beginSelection('col', 0, col, e);
-	}
-	function onColHeadPointerMove(e) {
-		if (!selecting) return;
-		const { x } = localXY(colHeadCanvas, e);
-		lastPointer = { x, y: 0 };
-		updateSelectionTo(0, xToColInHeader(x));
-		updateAutoScroll(x, 0);
-	}
-	function onColHeadPointerUp(e) {
-		colHeadCanvas.releasePointerCapture(e.pointerId);
-		endSelection();
-	}
-
-	// pointer handlers - ROW HEADER
-	function onRowHeadPointerDown(e) {
-		rowHeadCanvas.setPointerCapture(e.pointerId);
-		const { y } = localXY(rowHeadCanvas, e);
-		lastPointer = { x: 0, y };
-		const row = yToRowInHeader(y);
-		beginSelection('row', row, 0, e);
-	}
-	function onRowHeadPointerMove(e) {
-		if (!selecting) return;
-		const { y } = localXY(rowHeadCanvas, e);
-		lastPointer = { x: 0, y };
-		updateSelectionTo(yToRowInHeader(y), 0);
-		updateAutoScroll(0, y);
-	}
-	function onRowHeadPointerUp(e) {
-		rowHeadCanvas.releasePointerCapture(e.pointerId);
-		endSelection();
 	}
 
 	function handleAnyDblClick(e) {
@@ -396,35 +270,64 @@
 		}
 	}
 
-	// Auto-scroll while dragging near edges
-	function edgeVelocity(pos, size) {
-		if (pos < EDGE) return -Math.ceil((EDGE - pos) / 2);
-		if (pos > size - EDGE) return Math.ceil((pos - (size - EDGE)) / 2);
-		return 0;
-	}
-	function updateAutoScroll(x, y) {
-		const vx = edgeVelocity(x, containerWidth);
-		const vy = edgeVelocity(y, containerHeight);
-		auto.vx = vx;
-		auto.vy = vy;
-		if ((vx || vy) && !auto.raf) {
-			auto.raf = requestAnimationFrame(tickAutoScroll);
-		}
-		if (!vx && !vy) stopAutoScroll();
-	}
-	function tickAutoScroll() {
-		if (!selecting) return stopAutoScroll();
-		if (!auto.vx && !auto.vy) return stopAutoScroll();
-		clampScroll(scrollTop + auto.vy, scrollLeft + auto.vx);
-		const { row, col } = pointToCell(lastPointer.x, lastPointer.y);
-		updateSelectionTo(row, col);
-		auto.raf = requestAnimationFrame(tickAutoScroll);
-	}
-	function stopAutoScroll() {
-		if (auto.raf) cancelAnimationFrame(auto.raf);
-		auto.raf = null;
-		auto.vx = auto.vy = 0;
-	}
+	// Drag selection module wiring
+	const drag = createDragSelection({
+		getters: {
+			getSelecting: () => selecting,
+			getDragMode: () => dragMode,
+			getNumRows: () => sheet.numRows,
+			getColumnsLength: () => columns.length,
+			getContainerWidth: () => containerWidth,
+			getContainerHeight: () => containerHeight,
+			getScrollTop: () => scrollTop,
+			getScrollLeft: () => scrollLeft,
+			getLastActiveRow: () => lastActiveRow,
+			getLastActiveCol: () => lastActiveCol,
+			getAnchorRow: () => anchorRow,
+			getAnchorCol: () => anchorCol
+		},
+		setters: {
+			setSelecting: (v) => (selecting = v),
+			setDragMode: (v) => (dragMode = v),
+			setAnchorRow: (v) => (anchorRow = v),
+			setAnchorCol: (v) => (anchorCol = v),
+			setFocusRow: (v) => (focusRow = v),
+			setFocusCol: (v) => (focusCol = v),
+			setLastActiveRow: (v) => (lastActiveRow = v),
+			setLastActiveCol: (v) => (lastActiveCol = v),
+			setIsSelectionCopied: (v) => (isSelectionCopied = v)
+		},
+		methods: {
+			isEditorOpen: () => editor.open,
+			commitEditor: (save) => commitEditor(save),
+			drawHeaders: () => drawHeaders(),
+			drawGrid: () => drawGrid(),
+			getSelection: () => getSelection(),
+			clampScroll: (t, l) => clampScroll(t, l),
+			localXY: (el, e) => localXY(el, e),
+			pointToCell: (x, y) => pointToCell(x, y),
+			xToColInHeader: (x) => xToColInHeader(x),
+			yToRowInHeader: (y) => yToRowInHeader(y)
+		},
+		refs: {
+			getGridCanvas: () => gridCanvas,
+			getColHeadCanvas: () => colHeadCanvas,
+			getRowHeadCanvas: () => rowHeadCanvas
+		},
+		constants: { EDGE }
+	});
+
+	const {
+		onGridPointerDown,
+		onGridPointerMove,
+		onGridPointerUp,
+		onColHeadPointerDown,
+		onColHeadPointerMove,
+		onColHeadPointerUp,
+		onRowHeadPointerDown,
+		onRowHeadPointerMove,
+		onRowHeadPointerUp
+	} = drag;
 
 	// Renderers: thin wrappers that delegate to extracted modules for testability
 	function drawHeaders() {
