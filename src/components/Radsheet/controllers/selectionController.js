@@ -32,6 +32,16 @@ export function createSelectionController({ getters, setters, controllers }) {
 		setters.setIsSelectionCopied(false);
 	}
 
+	function setRange(r1, c1, r2, c2) {
+		setters.setAnchorRow(r1);
+		setters.setAnchorCol(c1);
+		setters.setFocusRow(r2);
+		setters.setFocusCol(c2);
+		setters.setLastActiveRow(r2);
+		setters.setLastActiveCol(c2);
+		setters.setIsSelectionCopied(false);
+	}
+
 	/**
 	 * Moves the focus cell, collapsing any existing selection.
 	 */
@@ -118,17 +128,107 @@ export function createSelectionController({ getters, setters, controllers }) {
 
 	function handleCopy() {
 		const sel = getSelection();
-		if (sel) {
-			setters.setIsSelectionCopied(true);
+		if (!sel) return;
+
+		const numCells = (sel.r2 - sel.r1 + 1) * (sel.c2 - sel.c1 + 1);
+		const LARGE_THRESHOLD = 10000;
+		const useAsync = getters.serializeRangeToTSVAsync && numCells >= LARGE_THRESHOLD;
+
+		const writeTSV = (tsv) => {
+			let copied = false;
+			if (
+				typeof navigator !== 'undefined' &&
+				navigator.clipboard &&
+				navigator.clipboard.writeText
+			) {
+				navigator.clipboard.writeText(tsv).then(
+					() => {
+						setters.setIsSelectionCopied(true);
+					},
+					() => {
+						copyViaTextarea(tsv);
+					}
+				);
+				copied = true;
+			}
+			if (!copied) copyViaTextarea(tsv);
+		};
+
+		if (useAsync) {
+			getters.serializeRangeToTSVAsync(sel.r1, sel.c1, sel.r2, sel.c2).then((tsv) => writeTSV(tsv));
+			return;
+		}
+
+		const tsv = getters.serializeRangeToTSV
+			? getters.serializeRangeToTSV(sel.r1, sel.c1, sel.r2, sel.c2)
+			: '';
+		writeTSV(tsv);
+
+		function copyViaTextarea(text) {
+			if (typeof document === 'undefined') return;
+			const ta = document.createElement('textarea');
+			ta.value = text;
+			ta.style.position = 'fixed';
+			ta.style.top = '-1000px';
+			ta.style.left = '-1000px';
+			document.body.appendChild(ta);
+			ta.focus();
+			ta.select();
+			try {
+				document.execCommand('copy');
+				setters.setIsSelectionCopied(true);
+			} catch (_) {
+				// no-op
+			} finally {
+				document.body.removeChild(ta);
+			}
+		}
+	}
+
+	function handlePaste(text) {
+		// If text not provided (e.g., invoked via keymap), try clipboard API
+		const pasteInto = () => {
+			const sel = getSelection();
+			const r = sel ? sel.r1 : getters.getLastActiveRow();
+			const c = sel ? sel.c1 : getters.getLastActiveCol();
+			if (getters.deserializeTSV && typeof text === 'string') {
+				const res = getters.deserializeTSV(r, c, text);
+				if (res && res.rows > 0 && res.cols > 0) {
+					const fr = r + res.rows - 1;
+					const fc = c + res.cols - 1;
+					setters.setAnchorRow(r);
+					setters.setAnchorCol(c);
+					setters.setFocusRow(fr);
+					setters.setFocusCol(fc);
+					setters.setLastActiveRow(fr);
+					setters.setLastActiveCol(fc);
+					setters.setIsSelectionCopied(false);
+					controllers.viewport.scrollCellIntoView(fr, fc);
+				}
+			}
+		};
+
+		if (typeof text === 'string') {
+			pasteInto();
+			return;
+		}
+
+		if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.readText) {
+			navigator.clipboard.readText().then((clipText) => {
+				text = clipText;
+				pasteInto();
+			});
 		}
 	}
 
 	return {
 		getSelection,
 		setCell,
+		setRange,
 		moveFocusBy,
 		extendSelectionBy,
 		extendSelectionToEdge,
-		handleCopy
+		handleCopy,
+		handlePaste
 	};
 }

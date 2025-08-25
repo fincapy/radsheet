@@ -52,6 +52,9 @@ export function createCommandBus({ getters, setters, controllers }) {
 			case 'CopySelection':
 				controllers.selection.handleCopy();
 				break;
+			case 'PasteFromClipboard':
+				controllers.selection.handlePaste(payload.text);
+				break;
 
 			default:
 				console.warn('Unknown command type:', type);

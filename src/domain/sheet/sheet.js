@@ -30,6 +30,7 @@
  */
 
 import { GlobalStringTable } from '../strings/GlobalStringTable.js';
+import { serialize2DToTSV, parseCell } from '../clipboard/tsv.js';
 import {
 	CHUNK_ROW_SHIFT_BITS,
 	CHUNK_COL_SHIFT_BITS,
@@ -63,6 +64,80 @@ export class Sheet {
 		this._chunks = new Map();
 		/** @type {string} */
 		this._lastAccessedChunkKey = '';
+	}
+
+	/**
+	 * Serializes a rectangular cell range to TSV suitable for pasting into spreadsheet apps
+	 * @param {number} topRow - Inclusive top row index
+	 * @param {number} leftCol - Inclusive left column index
+	 * @param {number} bottomRow - Inclusive bottom row index
+	 * @param {number} rightCol - Inclusive right column index
+	 * @returns {string} Tab-separated values with newline-delimited rows
+	 */
+	serializeRangeToTSV(topRow, leftCol, bottomRow, rightCol) {
+		const values = [];
+		for (let r = topRow; r <= bottomRow; r++) {
+			const row = [];
+			for (let c = leftCol; c <= rightCol; c++) row.push(this.getValue(r, c));
+			values.push(row);
+		}
+		return serialize2DToTSV(values);
+	}
+
+	/**
+	 * Reads a rectangular block of values into a 2D array
+	 * @param {number} topRow
+	 * @param {number} leftCol
+	 * @param {number} bottomRow
+	 * @param {number} rightCol
+	 * @returns {CellValue[][]}
+	 */
+	getBlock(topRow, leftCol, bottomRow, rightCol) {
+		const rows = [];
+		for (let r = topRow; r <= bottomRow; r++) {
+			const row = [];
+			for (let c = leftCol; c <= rightCol; c++) {
+				row.push(this.getValue(r, c));
+			}
+			rows.push(row);
+		}
+		return rows;
+	}
+
+	/**
+	 * Deserializes TSV text and writes it into the sheet starting at a position.
+	 * @param {number} topRow - Inclusive top row index to paste into
+	 * @param {number} leftCol - Inclusive left column index to paste into
+	 * @param {string} tsv - Text to paste (tab/newline separated)
+	 * @returns {{rows:number, cols:number, writeCount:number}} Size written and number of cells set
+	 */
+	deserializeTSV(topRow, leftCol, tsv) {
+		if (!tsv) return { rows: 0, cols: 0, writeCount: 0 };
+		const rawLines = tsv.split(/\r?\n/);
+		// Drop final empty line if input ends with newline
+		const lines =
+			rawLines.length > 0 && rawLines[rawLines.length - 1] === ''
+				? rawLines.slice(0, -1)
+				: rawLines;
+		let maxCols = 0;
+		const values2D = [];
+		for (const line of lines) {
+			const cells = line.split('\t');
+			maxCols = Math.max(maxCols, cells.length);
+			const parsedRow = cells.map((s) => this._parseTSVCell(s));
+			values2D.push(parsedRow);
+		}
+		const writeCount = this.setBlock(topRow, leftCol, values2D);
+		return { rows: values2D.length, cols: maxCols, writeCount };
+	}
+
+	/**
+	 * @private
+	 * @param {string} s
+	 * @returns {CellValue}
+	 */
+	_parseTSVCell(s) {
+		return parseCell(s);
 	}
 
 	/**

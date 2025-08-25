@@ -56,7 +56,8 @@ export const keymap = {
 		PageDown: { type: 'MoveFocusPage', payload: { direction: 'down' } },
 		Home: { type: 'MoveFocusHome' },
 		End: { type: 'MoveFocusEnd' },
-		'Ctrl+c': { type: 'CopySelection' }
+		'Ctrl+c': { type: 'CopySelection' },
+		'Meta+c': { type: 'CopySelection' }
 	},
 	editing: {
 		Enter: { type: 'CommitEditorAndMove', payload: { dr: 1, dc: 0 } },

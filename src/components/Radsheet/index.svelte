@@ -19,6 +19,10 @@
 	import { createRenderContext } from './render/createRenderContext.js';
 	import EditorOverlay from '../EditorOverlay.svelte';
 	import { localXY, pointToCell, xToColInHeader, yToRowInHeader } from './math.js';
+	import {
+		parseTSVChunked,
+		serializeRangeToTSVAsync as serializeRangeToTSVAsyncImpl
+	} from './workers/worker-client.js';
 
 	// bump when data changes so effect repaints
 	let sheetVersion = $state(0);
@@ -115,6 +119,9 @@
 		seedText: null
 	});
 
+	const serializeRangeToTSVAsync = (r1, c1, r2, c2) =>
+		serializeRangeToTSVAsyncImpl(readCell, r1, c1, r2, c2);
+
 	// Controllers setup
 	const { viewport, selection, commandBus, drag, dbl } = setupControllers({
 		viewport: {
@@ -155,7 +162,14 @@
 				setIsSelectionCopied
 			}
 		},
-		editor: { state: editorState, readCell, writeCell },
+		editor: {
+			state: editorState,
+			readCell,
+			writeCell,
+			serializeRangeToTSV: (r1, c1, r2, c2) => sheet.serializeRangeToTSV(r1, c1, r2, c2),
+			deserializeTSV: (r, c, text) => sheet.deserializeTSV(r, c, text),
+			serializeRangeToTSVAsync
+		},
 		methods: {
 			triggerRedraw: () => {
 				drawHeaders();
@@ -178,20 +192,72 @@
 
 	const { onWheel } = viewport;
 
+	function onPaste(e) {
+		const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+		if (!text) return;
+		e.preventDefault();
+		// For large pastes, stream parse on worker and setBlock in chunks
+		if (text.length > 200000) {
+			const sel = selection.getSelection();
+			const startR = sel ? sel.r1 : lastActiveRow;
+			const startC = sel ? sel.c1 : lastActiveCol;
+			let maxCols = 0;
+			let totalRows = 0;
+
+			parseTSVChunked(text, {
+				onInit: (_totalRows, _totalCols) => {
+					totalRows = _totalRows;
+					maxCols = _totalCols;
+				},
+				onChunk: (rowOffset, values) => {
+					sheet.setBlock(startR + rowOffset, startC, values);
+					scheduleRender();
+				},
+				onDone: () => {
+					const fr = startR + Math.max(0, totalRows - 1);
+					const fc = startC + Math.max(0, maxCols - 1);
+					selection.setRange(startR, startC, fr, fc);
+					viewport.scrollCellIntoView(fr, fc);
+					scheduleRender();
+				}
+			});
+		} else {
+			commandBus.dispatch({ type: 'PasteFromClipboard', payload: { text } });
+		}
+	}
+
 	// Input handler
 	const onKeyDown = createKeymapHandler(keymap, commandBus);
 
 	// Renderers via centralized render context
 	let renderCtx;
 
-	function drawHeaders() {
+	// Coalesced rendering via requestAnimationFrame to reduce jank
+	let renderScheduled = false;
+	function drawHeadersNow() {
 		if (!renderCtx) return;
 		drawHeadersImpl(renderCtx.getHeaderParams());
 	}
-
-	function drawGrid() {
+	function drawGridNow() {
 		if (!renderCtx) return;
 		drawGridImpl(renderCtx.getGridParams());
+	}
+	function scheduleRender() {
+		if (renderScheduled) return;
+		renderScheduled = true;
+		requestAnimationFrame(() => {
+			renderScheduled = false;
+			drawHeadersNow();
+			drawGridNow();
+		});
+	}
+
+	// Backwards-compat shim for callers expecting immediate functions
+	function drawHeaders() {
+		scheduleRender();
+	}
+	function drawGrid() {
+		scheduleRender();
 	}
 
 	// Redraw on relevant changes
@@ -210,8 +276,7 @@
 		endIndexRow;
 		endIndexCol;
 		sheetVersion;
-		drawHeaders();
-		drawGrid();
+		scheduleRender();
 	});
 
 	onMount(() => {
@@ -249,8 +314,7 @@
 		});
 
 		// Ensure first paint happens after render context is ready
-		drawHeaders();
-		drawGrid();
+		scheduleRender();
 
 		return () => {
 			cleanupResizeObserver();
@@ -264,7 +328,7 @@
 	});
 </script>
 
-<svelte:window onkeydown={onKeyDown} />
+<svelte:window onkeydown={onKeyDown} onpaste={onPaste} />
 
 <div
 	class="grid h-full w-full bg-white"

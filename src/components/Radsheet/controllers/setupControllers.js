@@ -39,7 +39,19 @@ export function setupControllers({
 			getLastActiveRow: sel.getters.getLastActiveRow,
 			getLastActiveCol: sel.getters.getLastActiveCol,
 			getSheetNumRows: sel.getters.getSheetNumRows,
-			getColumnsLength: sel.getters.getColumnsLength
+			getColumnsLength: sel.getters.getColumnsLength,
+			readCell: ed.readCell,
+			serializeRangeToTSV: ed.serializeRangeToTSV,
+			serializeRangeToTSVAsync: ed.serializeRangeToTSVAsync,
+			deserializeTSV: (r, c, text) => {
+				// Use editor setters to write block through domain
+				if (ed.deserializeTSV) {
+					const { rows, cols } = ed.deserializeTSV(r, c, text);
+					// No-op here; UI redraw handled by outer triggerRedraws
+					return { rows, cols };
+				}
+				return { rows: 0, cols: 0 };
+			}
 		},
 		setters: {
 			setAnchorRow: sel.setters.setAnchorRow,
@@ -50,7 +62,7 @@ export function setupControllers({
 			setLastActiveCol: sel.setters.setLastActiveCol,
 			setIsSelectionCopied: sel.setters.setIsSelectionCopied
 		},
-		controllers: { viewport }
+		controllers: { viewport, triggerRedraw: methods.triggerRedraw }
 	});
 
 	const editor = createEditorController({
