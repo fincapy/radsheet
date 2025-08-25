@@ -58,6 +58,7 @@
 	let focusCol = $state(null);
 	let lastActiveRow = $state(0);
 	let lastActiveCol = $state(0);
+	let isSelectionCopied = $state(false); // Track if selection is copied (for dotted border)
 
 	// Cell access adapters to support multiple Sheet APIs
 	function readCell(r, c) {
@@ -300,6 +301,7 @@
 			focusRow = row;
 			focusCol = col;
 		}
+		isSelectionCopied = false; // Reset copied state when starting new selection
 		selecting = true;
 		drawHeaders();
 		drawGrid();
@@ -484,7 +486,8 @@
 			readCell,
 			getSelection,
 			anchorRow,
-			anchorCol
+			anchorCol,
+			isSelectionCopied
 		});
 	}
 
@@ -502,11 +505,44 @@
 			e.preventDefault();
 			return;
 		}
+
+		// Handle arrow keys with shift and ctrl modifiers
+		const arrowKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+		if (arrowKeys.includes(e.key)) {
+			e.preventDefault();
+
+			if (e.shiftKey) {
+				// Shift+Arrow: Extend selection
+				if (e.ctrlKey) {
+					// Ctrl+Shift+Arrow: Extend selection to edge of data
+					extendSelectionToEdge(e.key);
+				} else {
+					// Shift+Arrow: Extend selection by one cell
+					extendSelectionBy(e.key);
+				}
+			} else {
+				// Regular arrow: Move focus (clear selection)
+				const nav = {
+					ArrowUp: [-1, 0],
+					ArrowDown: [1, 0],
+					ArrowLeft: [0, -1],
+					ArrowRight: [0, 1]
+				};
+				const [dr, dc] = nav[e.key];
+				moveFocusBy(dr, dc);
+			}
+			return;
+		}
+
+		// Handle copy (Ctrl+C)
+		if (e.ctrlKey && e.key === 'c') {
+			e.preventDefault();
+			handleCopy();
+			return;
+		}
+
+		// Handle other navigation keys
 		const nav = {
-			ArrowUp: [-1, 0],
-			ArrowDown: [1, 0],
-			ArrowLeft: [0, -1],
-			ArrowRight: [0, 1],
 			PageUp: [-visibleRowCount + 1, 0],
 			PageDown: [visibleRowCount - 1, 0],
 			Home: [0, -lastActiveCol],
@@ -523,10 +559,91 @@
 		let c = Math.min(Math.max(lastActiveCol + dc, 0), columns.length - 1);
 		anchorRow = focusRow = lastActiveRow = r;
 		anchorCol = focusCol = lastActiveCol = c;
+		isSelectionCopied = false; // Reset copied state when selection changes
 		scrollCellIntoView(r, c);
 		drawHeaders();
 		drawGrid();
 	}
+
+	/** Extend selection by one cell in the specified direction */
+	function extendSelectionBy(key) {
+		// If no selection exists, create one with current cell as anchor
+		if (anchorRow === null || anchorCol === null) {
+			anchorRow = lastActiveRow;
+			anchorCol = lastActiveCol;
+		}
+
+		const nav = {
+			ArrowUp: [-1, 0],
+			ArrowDown: [1, 0],
+			ArrowLeft: [0, -1],
+			ArrowRight: [0, 1]
+		};
+
+		const [dr, dc] = nav[key];
+		let newFocusRow = Math.min(Math.max(focusRow + dr, 0), sheet.numRows - 1);
+		let newFocusCol = Math.min(Math.max(focusCol + dc, 0), columns.length - 1);
+
+		focusRow = newFocusRow;
+		focusCol = newFocusCol;
+		lastActiveRow = newFocusRow;
+		lastActiveCol = newFocusCol;
+
+		scrollCellIntoView(newFocusRow, newFocusCol);
+		drawHeaders();
+		drawGrid();
+	}
+
+	/** Extend selection to the edge of data in the specified direction */
+	function extendSelectionToEdge(key) {
+		// If no selection exists, create one with current cell as anchor
+		if (anchorRow === null || anchorCol === null) {
+			anchorRow = lastActiveRow;
+			anchorCol = lastActiveCol;
+		}
+
+		let newFocusRow = focusRow;
+		let newFocusCol = focusCol;
+
+		switch (key) {
+			case 'ArrowUp':
+				// Find the topmost row with data or go to row 0
+				newFocusRow = 0;
+				break;
+			case 'ArrowDown':
+				// Find the bottommost row with data or go to last row
+				newFocusRow = sheet.numRows - 1;
+				break;
+			case 'ArrowLeft':
+				// Find the leftmost column with data or go to column 0
+				newFocusCol = 0;
+				break;
+			case 'ArrowRight':
+				// Find the rightmost column with data or go to last column
+				newFocusCol = columns.length - 1;
+				break;
+		}
+
+		focusRow = newFocusRow;
+		focusCol = newFocusCol;
+		lastActiveRow = newFocusRow;
+		lastActiveCol = newFocusCol;
+
+		scrollCellIntoView(newFocusRow, newFocusCol);
+		drawHeaders();
+		drawGrid();
+	}
+
+	/** Handle copy operation - sets selection border to dotted */
+	function handleCopy() {
+		const sel = getSelection();
+		if (sel) {
+			isSelectionCopied = true;
+			drawHeaders();
+			drawGrid();
+		}
+	}
+
 	function scrollCellIntoView(r, c) {
 		const cellTop = r * CELL_HEIGHT;
 		const cellLeft = c * CELL_WIDTH;
@@ -552,6 +669,7 @@
 		anchorCol;
 		focusRow;
 		focusCol; // depend on raw selection drivers
+		isSelectionCopied; // depend on copy state
 		scrollTop;
 		scrollLeft;
 		containerWidth;

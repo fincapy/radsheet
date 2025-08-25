@@ -24,7 +24,8 @@ export function drawGrid(opts) {
 		readCell,
 		getSelection,
 		anchorRow,
-		anchorCol
+		anchorCol,
+		isSelectionCopied = false
 	} = opts;
 
 	if (!gridCanvas) return;
@@ -102,6 +103,13 @@ export function drawGrid(opts) {
 		// Draw the thick border only on visible edges
 		ctx.strokeStyle = '#3b82f6';
 		ctx.lineWidth = 2;
+
+		// Set line dash for dotted border when copied
+		if (isSelectionCopied) {
+			ctx.setLineDash([4, 4]);
+		} else {
+			ctx.setLineDash([]);
+		}
 		const viewW = visibleColCount * CELL_WIDTH;
 		const viewH = visibleRowCount * CELL_HEIGHT;
 		const selX0 = (c1 - startIndexCol) * CELL_WIDTH;
@@ -175,6 +183,7 @@ export function drawGrid(opts) {
 			ctx.save();
 			ctx.strokeStyle = '#3b82f6';
 			ctx.lineWidth = 2;
+			ctx.setLineDash([]);
 			ctx.strokeRect(ax + 1, ay + 1, CELL_WIDTH - 2, CELL_HEIGHT - 2);
 			ctx.restore();
 		}
