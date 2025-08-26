@@ -1,7 +1,6 @@
 export function createCommandBus({ getters, setters, controllers, methods }) {
 	function dispatch(action) {
 		const { type, payload } = action;
-
 		switch (type) {
 			// Selection Commands
 			case 'MoveFocusBy':

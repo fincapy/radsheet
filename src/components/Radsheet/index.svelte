@@ -20,7 +20,7 @@
 	import EditorOverlay from '../EditorOverlay.svelte';
 	import { localXY, yToRowInHeader } from './math.js';
 	import { resolveTheme } from './theme.js';
-	let { theme: themeInput = 'light', data: dataInput } = $props();
+	let { theme: themeInput = 'light', data: dataInput, editable = false } = $props();
 	let resolvedTheme = $state(resolveTheme(themeInput));
 
 	$effect(() => {
@@ -640,7 +640,8 @@
 			setHoverResizeCol: (idx) => setHoverResizeCol(idx),
 			undo,
 			redo,
-			deleteSelection
+			deleteSelection,
+			canEdit: () => editable
 		},
 		refs: {
 			getGridCanvas: () => gridCanvas,
@@ -653,6 +654,7 @@
 	const { onWheel } = viewport;
 
 	function onPaste(e) {
+		if (!editable) return;
 		const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
 		if (!text) return;
 		e.preventDefault();
@@ -718,7 +720,7 @@
 	};
 
 	// Input handler
-	const onKeyDown = createKeymapHandler(keymap, commandBus);
+	const onKeyDown = createKeymapHandler(keymap, commandBus, { canEdit: () => editable });
 
 	// Renderers via centralized render context
 	let renderCtx;
@@ -994,62 +996,64 @@
 			}}
 			oncontextmenu={(e) => e.preventDefault()}
 		>
-			<!-- Undo -->
-			<button
-				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
-				style="color: var(--rs-popover-text);"
-				onclick={() => onContextAction('Undo')}
-				disabled={!sheet.canUndo()}
-			>
-				<div class="flex items-center gap-3">
-					<svg
-						class="h-4 w-4"
-						style="color: var(--rs-icon-muted);"
-						fill="none"
-						stroke="currentColor"
-						viewBox="0 0 24 24"
-					>
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width="2"
-							d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
-						/>
-					</svg>
-					<span>Undo</span>
-				</div>
-				<span class="text-xs" style="color: var(--rs-popover-muted-text);">Ctrl+Z</span>
-			</button>
+			{#if editable}
+				<!-- Undo -->
+				<button
+					class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+					style="color: var(--rs-popover-text);"
+					onclick={() => onContextAction('Undo')}
+					disabled={!sheet.canUndo()}
+				>
+					<div class="flex items-center gap-3">
+						<svg
+							class="h-4 w-4"
+							style="color: var(--rs-icon-muted);"
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
+							/>
+						</svg>
+						<span>Undo</span>
+					</div>
+					<span class="text-xs" style="color: var(--rs-popover-muted-text);">Ctrl+Z</span>
+				</button>
 
-			<!-- Redo -->
-			<button
-				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
-				style="color: var(--rs-popover-text);"
-				onclick={() => onContextAction('Redo')}
-				disabled={!sheet.canRedo()}
-			>
-				<div class="flex items-center gap-3">
-					<svg
-						class="h-4 w-4"
-						style="color: var(--rs-icon-muted);"
-						fill="none"
-						stroke="currentColor"
-						viewBox="0 0 24 24"
-					>
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width="2"
-							d="M21 10h-10a8 8 0 00-8 8v2M21 10l-6 6m6-6l-6-6"
-						/>
-					</svg>
-					<span>Redo</span>
-				</div>
-				<span class="text-xs" style="color: var(--rs-popover-muted-text);">Ctrl+Y</span>
-			</button>
+				<!-- Redo -->
+				<button
+					class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+					style="color: var(--rs-popover-text);"
+					onclick={() => onContextAction('Redo')}
+					disabled={!sheet.canRedo()}
+				>
+					<div class="flex items-center gap-3">
+						<svg
+							class="h-4 w-4"
+							style="color: var(--rs-icon-muted);"
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M21 10h-10a8 8 0 00-8 8v2M21 10l-6 6m6-6l-6-6"
+							/>
+						</svg>
+						<span>Redo</span>
+					</div>
+					<span class="text-xs" style="color: var(--rs-popover-muted-text);">Ctrl+Y</span>
+				</button>
 
-			<!-- Divider -->
-			<div class="my-1" style="border-top: 1px solid var(--rs-popover-border);"></div>
+				<!-- Divider -->
+				<div class="my-1" style="border-top: 1px solid var(--rs-popover-border);"></div>
+			{/if}
 
 			<!-- Copy -->
 			<button
@@ -1077,113 +1081,123 @@
 				<span class="text-xs" style="color: var(--rs-popover-muted-text);">Ctrl+C</span>
 			</button>
 
-			<!-- Paste -->
-			<button
-				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors"
-				style="color: var(--rs-popover-text);"
-				onclick={() => onContextAction('Paste')}
-			>
-				<div class="flex items-center gap-3">
-					<svg
-						class="h-4 w-4"
-						style="color: var(--rs-icon-muted);"
-						fill="none"
-						stroke="currentColor"
-						viewBox="0 0 24 24"
-					>
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width="2"
-							d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-						/>
-					</svg>
-					<span>Paste</span>
-				</div>
-				<span class="text-xs" style="color: var(--rs-popover-muted-text);">Ctrl+V</span>
-			</button>
+			{#if editable}
+				<!-- Paste -->
+				<button
+					class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors"
+					style="color: var(--rs-popover-text);"
+					onclick={() => onContextAction('Paste')}
+				>
+					<div class="flex items-center gap-3">
+						<svg
+							class="h-4 w-4"
+							style="color: var(--rs-icon-muted);"
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+							/>
+						</svg>
+						<span>Paste</span>
+					</div>
+					<span class="text-xs" style="color: var(--rs-popover-muted-text);">Ctrl+V</span>
+				</button>
+			{/if}
 
 			<!-- Divider -->
-			<div class="my-1" style="border-top: 1px solid var(--rs-popover-border);"></div>
+			{#if editable}
+				<div class="my-1" style="border-top: 1px solid var(--rs-popover-border);"></div>
+			{/if}
 
-			<!-- Delete -->
-			<button
-				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors"
-				style="color: var(--rs-popover-text);"
-				onclick={() => onContextAction('Delete')}
-			>
-				<div class="flex items-center gap-3">
-					<svg
-						class="h-4 w-4"
-						style="color: var(--rs-icon-muted);"
-						fill="none"
-						stroke="currentColor"
-						viewBox="0 0 24 24"
-					>
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width="2"
-							d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-						/>
-					</svg>
-					<span>Delete</span>
-				</div>
-				<span class="text-xs" style="color: var(--rs-popover-muted-text);">Delete</span>
-			</button>
+			{#if editable}
+				<!-- Delete -->
+				<button
+					class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors"
+					style="color: var(--rs-popover-text);"
+					onclick={() => onContextAction('Delete')}
+				>
+					<div class="flex items-center gap-3">
+						<svg
+							class="h-4 w-4"
+							style="color: var(--rs-icon-muted);"
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+							/>
+						</svg>
+						<span>Delete</span>
+					</div>
+					<span class="text-xs" style="color: var(--rs-popover-muted-text);">Delete</span>
+				</button>
+			{/if}
 
 			<!-- Divider -->
-			<div class="my-1" style="border-top: 1px solid var(--rs-popover-border);"></div>
+			{#if editable}
+				<div class="my-1" style="border-top: 1px solid var(--rs-popover-border);"></div>
+			{/if}
 
-			<!-- Add Rows -->
-			<button
-				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors"
-				style="color: var(--rs-popover-text);"
-				onclick={() => onContextAction('AddRows')}
-			>
-				<div class="flex items-center gap-3">
-					<svg
-						class="h-4 w-4"
-						style="color: var(--rs-icon-muted);"
-						fill="none"
-						stroke="currentColor"
-						viewBox="0 0 24 24"
-					>
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width="2"
-							d="M12 4v16m8-8H4"
-						/>
-					</svg>
-					<span>Add 1000 Rows</span>
-				</div>
-			</button>
+			{#if editable}
+				<!-- Add Rows -->
+				<button
+					class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors"
+					style="color: var(--rs-popover-text);"
+					onclick={() => onContextAction('AddRows')}
+				>
+					<div class="flex items-center gap-3">
+						<svg
+							class="h-4 w-4"
+							style="color: var(--rs-icon-muted);"
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M12 4v16m8-8H4"
+							/>
+						</svg>
+						<span>Add 1000 Rows</span>
+					</div>
+				</button>
 
-			<!-- Add Columns -->
-			<button
-				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors"
-				style="color: var(--rs-popover-text);"
-				onclick={() => onContextAction('AddColumns')}
-			>
-				<div class="flex items-center gap-3">
-					<svg
-						class="h-4 w-4"
-						style="color: var(--rs-icon-muted);"
-						fill="none"
-						stroke="currentColor"
-						viewBox="0 0 24 24"
-					>
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width="2"
-							d="M12 4v16m8-8H4"
-						/>
-					</svg>
-					<span>Add A–Z Columns</span>
-				</div>
-			</button>
+				<!-- Add Columns -->
+				<button
+					class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors"
+					style="color: var(--rs-popover-text);"
+					onclick={() => onContextAction('AddColumns')}
+				>
+					<div class="flex items-center gap-3">
+						<svg
+							class="h-4 w-4"
+							style="color: var(--rs-icon-muted);"
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M12 4v16m8-8H4"
+							/>
+						</svg>
+						<span>Add A–Z Columns</span>
+					</div>
+				</button>
+			{/if}
 		</div>
 		<!-- window handlers are integrated into the main <svelte:window> above -->
 	{/if}

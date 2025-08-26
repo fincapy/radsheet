@@ -6,6 +6,7 @@ export function createDoubleClickController({ getters, methods, controllers, ref
 	 * Double click on the main grid should open the editor at the clicked cell.
 	 */
 	function onGridDblClick(e) {
+		if (methods && typeof methods.canEdit === 'function' && !methods.canEdit()) return;
 		const canvas = refs.getGridCanvas();
 		if (!canvas) return;
 		const { x, y } = methods.localXY(canvas, e);
@@ -43,6 +44,7 @@ export function createDoubleClickController({ getters, methods, controllers, ref
 					return;
 				}
 			}
+			if (methods && typeof methods.canEdit === 'function' && !methods.canEdit()) return;
 			if (!controllers.editor.isEditorOpen()) {
 				controllers.editor.openEditorAt(getters.getLastActiveRow(), getters.getLastActiveCol());
 			}

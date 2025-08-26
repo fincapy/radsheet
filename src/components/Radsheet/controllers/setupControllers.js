@@ -162,7 +162,8 @@ export function setupControllers({
 			getColEdgeNearX: methods.getColEdgeNearX,
 			autoFitColumn: methods.autoFitColumn,
 			getRowEdgeNearY: methods.getRowEdgeNearY,
-			autoFitRow: methods.autoFitRow
+			autoFitRow: methods.autoFitRow,
+			canEdit: methods.canEdit
 		},
 		controllers: { editor },
 		refs

@@ -8,12 +8,27 @@ function getKeyDef(e) {
 	return def.join('+');
 }
 
-export function createKeymapHandler(keymap, commandBus) {
+export function createKeymapHandler(keymap, commandBus, options = {}) {
+	const canEdit = typeof options.canEdit === 'function' ? options.canEdit : () => true;
+	const isMutatingType = (type) => {
+		return (
+			type === 'OpenEditorAtFocus' ||
+			type === 'OpenEditorAndType' ||
+			type === 'CommitEditor' ||
+			type === 'CommitEditorAndMove' ||
+			type === 'UpdateEditorValue' ||
+			type === 'PasteFromClipboard' ||
+			type === 'DeleteSelection' ||
+			type === 'Undo' ||
+			type === 'Redo'
+		);
+	};
 	return function handleKeyDown(e) {
 		if (commandBus.isEditorOpen()) {
 			const editorDef = getKeyDef(e);
 			const editorAction = keymap.editing[editorDef];
 			if (editorAction) {
+				if (!canEdit()) return;
 				e.preventDefault();
 				e.stopPropagation();
 				commandBus.dispatch(editorAction);
@@ -24,6 +39,7 @@ export function createKeymapHandler(keymap, commandBus) {
 		const normalDef = getKeyDef(e);
 		const normalAction = keymap.normal[normalDef];
 		if (normalAction) {
+			if (!canEdit() && isMutatingType(normalAction.type)) return;
 			e.preventDefault();
 			commandBus.dispatch(normalAction);
 			return;
@@ -31,6 +47,7 @@ export function createKeymapHandler(keymap, commandBus) {
 
 		// Fallback for single-character typing to open editor
 		if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+			if (!canEdit()) return;
 			e.preventDefault();
 			commandBus.dispatch({ type: 'OpenEditorAndType', payload: { key: e.key } });
 		}

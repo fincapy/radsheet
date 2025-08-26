@@ -80,6 +80,6 @@
 		</button>
 	</div>
 	<div class="h-100 w-11/12">
-		<Radsheet bind:this={sheetRef} theme={themeOption} />
+		<Radsheet bind:this={sheetRef} theme={themeOption} editable={true} />
 	</div>
 </main>
