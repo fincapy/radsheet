@@ -34,7 +34,8 @@ import { serialize2DToTSV, parseCell } from '../clipboard/tsv.js';
 import {
 	CHUNK_ROW_SHIFT_BITS,
 	CHUNK_COL_SHIFT_BITS,
-	CELLS_PER_CHUNK
+	CELLS_PER_CHUNK,
+	CHUNK_NUM_COLS
 } from '../constants/ChunkSizing.js';
 import {
 	PROMOTE_TO_DENSE_FILL_RATIO,
@@ -425,8 +426,13 @@ export class Sheet {
 				const dense = createDenseChunk();
 				dense.nonEmptyCellCount = chunk.nonEmptyCellCount;
 
+				// Compute the chunk's column index from the current cell; all cells share the same chunkColIndex
+				const chunkColIndex = globalColIndex >> CHUNK_COL_SHIFT_BITS;
+
 				for (const [i, cellValue] of chunk.localIndexToValue) {
-					this._assignValueToDenseChunk(dense, i, cellValue);
+					const localCol = i & (CHUNK_NUM_COLS - 1);
+					const globalColForI = (chunkColIndex << CHUNK_COL_SHIFT_BITS) | localCol;
+					this._assignValueToDenseChunk(dense, i, cellValue, globalColForI);
 				}
 				this._chunks.set(this._lastAccessedChunkKey, dense);
 			}
@@ -434,7 +440,7 @@ export class Sheet {
 			if (chunk.tagByLocalIndex[localIndex] === CELL_TAG_EMPTY) {
 				chunk.nonEmptyCellCount++;
 			}
-			this._assignValueToDenseChunk(chunk, localIndex, value);
+			this._assignValueToDenseChunk(chunk, localIndex, value, globalColIndex);
 		}
 
 		this._recordChange(globalRowIndex, globalColIndex, prev, value);
@@ -605,7 +611,7 @@ export class Sheet {
 	 * @param {number} localIndex - The local index within the chunk
 	 * @param {CellValue} value - The value to assign
 	 */
-	_assignValueToDenseChunk(denseChunk, localIndex, value) {
+	_assignValueToDenseChunk(denseChunk, localIndex, value, globalColIndex) {
 		if (typeof value === 'number') {
 			denseChunk.tagByLocalIndex[localIndex] = CELL_TAG_NUMBER;
 			denseChunk.numberByLocalIndex[localIndex] = value;
@@ -614,8 +620,10 @@ export class Sheet {
 			denseChunk.numberByLocalIndex[localIndex] = value ? 1 : 0;
 		} else {
 			denseChunk.tagByLocalIndex[localIndex] = CELL_TAG_STRING;
+			// Use column index as shard key for interning
 			denseChunk.stringIdByLocalIndex[localIndex] = this.globalStringTable.getIdForString(
-				String(value)
+				String(value),
+				globalColIndex >>> 0
 			);
 		}
 	}
