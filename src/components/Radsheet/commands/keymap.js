@@ -57,7 +57,13 @@ export const keymap = {
 		Home: { type: 'MoveFocusHome' },
 		End: { type: 'MoveFocusEnd' },
 		'Ctrl+c': { type: 'CopySelection' },
-		'Meta+c': { type: 'CopySelection' }
+		'Meta+c': { type: 'CopySelection' },
+		'Ctrl+z': { type: 'Undo' },
+		'Meta+z': { type: 'Undo' },
+		'Ctrl+Shift+z': { type: 'Redo' },
+		'Meta+Shift+z': { type: 'Redo' },
+		'Ctrl+y': { type: 'Redo' },
+		'Meta+y': { type: 'Redo' }
 	},
 	editing: {
 		Enter: { type: 'CommitEditorAndMove', payload: { dr: 1, dc: 0 } },

@@ -1,4 +1,4 @@
-export function createCommandBus({ getters, setters, controllers }) {
+export function createCommandBus({ getters, setters, controllers, methods }) {
 	function dispatch(action) {
 		const { type, payload } = action;
 
@@ -54,6 +54,13 @@ export function createCommandBus({ getters, setters, controllers }) {
 				break;
 			case 'PasteFromClipboard':
 				controllers.selection.handlePaste(payload.text);
+				break;
+			// History Commands
+			case 'Undo':
+				if (methods && methods.undo) methods.undo();
+				break;
+			case 'Redo':
+				if (methods && methods.redo) methods.redo();
 				break;
 
 			default:

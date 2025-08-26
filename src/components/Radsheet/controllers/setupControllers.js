@@ -90,7 +90,8 @@ export function setupControllers({
 		setters: {
 			triggerRedraw: methods.triggerRedraw
 		},
-		controllers: { selection, editor }
+		controllers: { selection, editor },
+		methods
 	});
 
 	const drag = createDragSelectionController({

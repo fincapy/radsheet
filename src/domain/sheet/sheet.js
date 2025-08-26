@@ -64,6 +64,117 @@ export class Sheet {
 		this._chunks = new Map();
 		/** @type {string} */
 		this._lastAccessedChunkKey = '';
+
+		// --- Undo/Redo state ---
+		/** @type {{ r:number, c:number, prev:CellValue, next:CellValue }[][]} */
+		this._undoStack = [];
+		/** @type {{ r:number, c:number, prev:CellValue, next:CellValue }[][]} */
+		this._redoStack = [];
+		/** @type {{ r:number, c:number, prev:CellValue, next:CellValue }[]|null} */
+		this._currentTransaction = null;
+		/** @type {Map<string, number>|null} */
+		this._txnIndexByCell = null;
+		/** @type {boolean} */
+		this._isApplyingHistory = false;
+	}
+
+	/**
+	 * Runs a set of edits as a single undoable transaction.
+	 * If already in a transaction, it executes inline.
+	 * @param {() => void} fn
+	 */
+	transact(fn) {
+		if (this._currentTransaction) {
+			fn();
+			return;
+		}
+		this.beginTransaction();
+		try {
+			fn();
+			this.commitTransaction();
+		} catch (err) {
+			// Discard on error
+			this._currentTransaction = null;
+			this._txnIndexByCell = null;
+			throw err;
+		}
+	}
+
+	/** Starts an explicit transaction */
+	beginTransaction() {
+		if (this._currentTransaction) return; // nested supported as no-op
+		this._currentTransaction = [];
+		this._txnIndexByCell = new Map();
+	}
+
+	/** Commits the current transaction onto the undo stack */
+	commitTransaction() {
+		if (!this._currentTransaction) return;
+		const tx = this._currentTransaction;
+		this._currentTransaction = null;
+		this._txnIndexByCell = null;
+		if (tx.length > 0) {
+			this._undoStack.push(tx);
+			this._redoStack.length = 0; // clear
+		}
+	}
+
+	/** Undo last committed transaction */
+	undo() {
+		if (this._currentTransaction) this.commitTransaction();
+		const tx = this._undoStack.pop();
+		if (!tx) return false;
+		this._isApplyingHistory = true;
+		try {
+			// Apply in reverse order
+			for (let i = tx.length - 1; i >= 0; i--) {
+				const { r, c, prev } = tx[i];
+				if (prev === '' || prev == null) this.deleteValue(r, c);
+				else this.setValue(r, c, prev);
+			}
+		} finally {
+			this._isApplyingHistory = false;
+		}
+		this._redoStack.push(tx);
+		return true;
+	}
+
+	/** Redo last undone transaction */
+	redo() {
+		if (this._currentTransaction) this.commitTransaction();
+		const tx = this._redoStack.pop();
+		if (!tx) return false;
+		this._isApplyingHistory = true;
+		try {
+			for (let i = 0; i < tx.length; i++) {
+				const { r, c, next } = tx[i];
+				if (next === '' || next == null) this.deleteValue(r, c);
+				else this.setValue(r, c, next);
+			}
+		} finally {
+			this._isApplyingHistory = false;
+		}
+		this._undoStack.push(tx);
+		return true;
+	}
+
+	/** @private */
+	_recordChange(r, c, prev, next) {
+		if (this._isApplyingHistory) return; // do not record during undo/redo
+		if (!this._currentTransaction) return; // only record inside transactions
+		if (prev === next) return; // no-op
+		const key = r + ',' + c;
+		const map = this._txnIndexByCell;
+		if (map && map.has(key)) {
+			const idx = map.get(key);
+			const entry = this._currentTransaction[idx];
+			// Only update next; preserve earliest prev
+			entry.next = next;
+			return;
+		}
+		const entry = { r, c, prev, next };
+		this._currentTransaction.push(entry);
+		if (map) map.set(key, this._currentTransaction.length - 1);
 	}
 
 	/**
@@ -113,6 +224,9 @@ export class Sheet {
 	 */
 	deserializeTSV(topRow, leftCol, tsv) {
 		if (!tsv) return { rows: 0, cols: 0, writeCount: 0 };
+		// Entire paste is one transaction for efficient undo
+		const startedHere = !this._currentTransaction;
+		if (startedHere) this.beginTransaction();
 		const rawLines = tsv.split(/\r?\n/);
 		// Drop final empty line if input ends with newline
 		const lines =
@@ -128,6 +242,7 @@ export class Sheet {
 			values2D.push(parsedRow);
 		}
 		const writeCount = this.setBlock(topRow, leftCol, values2D);
+		if (startedHere) this.commitTransaction();
 		return { rows: values2D.length, cols: maxCols, writeCount };
 	}
 
@@ -193,9 +308,14 @@ export class Sheet {
 	 */
 	setValue(globalRowIndex, globalColIndex, value) {
 		if (value === '' || value == null) {
+			// Treat as delete
+			const prev = this.getValue(globalRowIndex, globalColIndex);
 			this.deleteValue(globalRowIndex, globalColIndex);
+			this._recordChange(globalRowIndex, globalColIndex, prev, null);
 			return;
 		}
+
+		const prev = this.getValue(globalRowIndex, globalColIndex);
 
 		let chunk = this._getChunk(globalRowIndex, globalColIndex, /*createIfMissing=*/ true);
 		const localIndex = computeLocalIndexWithinChunk(globalRowIndex, globalColIndex);
@@ -219,6 +339,8 @@ export class Sheet {
 			}
 			this._assignValueToDenseChunk(chunk, localIndex, value);
 		}
+
+		this._recordChange(globalRowIndex, globalColIndex, prev, value);
 	}
 
 	/**
@@ -231,6 +353,7 @@ export class Sheet {
 		if (!chunk) return;
 
 		const localIndex = computeLocalIndexWithinChunk(globalRowIndex, globalColIndex);
+		const prevValue = this.getValue(globalRowIndex, globalColIndex);
 
 		if (chunk.kind === 'sparse') {
 			if (chunk.localIndexToValue.delete(localIndex)) {
@@ -268,6 +391,8 @@ export class Sheet {
 				}
 			}
 		}
+
+		this._recordChange(globalRowIndex, globalColIndex, prevValue, null);
 	}
 
 	/**
@@ -287,7 +412,9 @@ export class Sheet {
 				const cellValue = rowValues[c];
 
 				if (cellValue === '' || cellValue == null) {
+					const prev = this.getValue(globalRowIndex, globalColIndex);
 					this.deleteValue(globalRowIndex, globalColIndex);
+					// deleteValue will record change
 					continue;
 				}
 

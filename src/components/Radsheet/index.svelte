@@ -34,8 +34,15 @@
 	// Domain model (source of truth for cell values)
 	let sheet = $state.raw(new Sheet());
 	const readCell = (r, c) => sheet.getValue(r, c);
-	const writeCell = (r, c, v) => executeWithRerender(() => sheet.setValue(r, c, v));
+	const writeCell = (r, c, v) =>
+		executeWithRerender(() => {
+			sheet.transact(() => sheet.setValue(r, c, v));
+		});
 	const addRows = () => executeWithRerender(() => sheet.addRows(1000));
+
+	// History closures
+	const undo = () => executeWithRerender(() => sheet.undo());
+	const redo = () => executeWithRerender(() => sheet.redo());
 
 	// Viewport + layout state
 	let scrollTop = $state(0);
@@ -460,7 +467,9 @@
 			setRowHeight: (r, h) => setRowHeight(r, h),
 			autoFitRow: (r) => autoFitRow(r),
 			getRowTop: (r) => rowTop(r),
-			setHoverResizeCol: (idx) => setHoverResizeCol(idx)
+			setHoverResizeCol: (idx) => setHoverResizeCol(idx),
+			undo,
+			redo
 		},
 		refs: {
 			getGridCanvas: () => gridCanvas,
@@ -490,10 +499,12 @@
 					maxCols = _totalCols;
 				},
 				onChunk: (rowOffset, values) => {
+					if (!sheet._currentTransaction) sheet.beginTransaction();
 					sheet.setBlock(startR + rowOffset, startC, values);
 					scheduleRender();
 				},
 				onDone: () => {
+					if (sheet._currentTransaction) sheet.commitTransaction();
 					const fr = startR + Math.max(0, totalRows - 1);
 					const fc = startC + Math.max(0, maxCols - 1);
 					selection.setRange(startR, startC, fr, fc);
