@@ -30,7 +30,9 @@ export function drawHeaders(opts) {
 		getRowHeight,
 		rowTop,
 		getHoverResizeRow,
-		theme
+		theme,
+		isFiltered,
+		activeFilters
 	} = opts;
 
 	// Column headers
@@ -74,6 +76,20 @@ export function drawHeaders(opts) {
 			ctx.fillStyle = t?.header?.text || '#475569';
 			const label = columns[c] ?? String(c);
 			ctx.fillText(label, x + w / 2, COLUMN_HEADER_HEIGHT / 2);
+
+			// Draw filter icon if filtering UI is enabled
+			if (isFiltered) {
+				const iconX = x + w - 20;
+				const iconY = COLUMN_HEADER_HEIGHT / 2 - 6;
+				drawFilterIcon(ctx, iconX, iconY, theme, activeFilters.has(c));
+			}
+
+			// Highlight for column resize
+			const hoverCol = getHoverResizeCol ? getHoverResizeCol() : null;
+			if (hoverCol != null && hoverCol === c) {
+				ctx.fillStyle = t?.selection?.hoverResizeGlow || 'rgba(59,130,246,0.12)';
+				ctx.fillRect(x, 0, w, COLUMN_HEADER_HEIGHT);
+			}
 
 			ctx.strokeStyle = t?.header?.gridLine || '#e5e7eb';
 			ctx.lineWidth = 1;
@@ -210,4 +226,33 @@ export function drawHeaders(opts) {
 		ctx.lineTo(ROW_HEADER_WIDTH + 0.5, containerHeight + 0.5);
 		ctx.stroke();
 	}
+}
+
+function drawFilterIcon(ctx, x, y, theme, isActive) {
+	ctx.save();
+	// Draw a clean funnel icon
+	const funnelTop = { x1: x + 1.5, y1: y + 2.5, x2: x + 10.5, y2: y + 2.5 };
+	const funnelMid = { x: x + 6, y: y + 6.5 };
+	const funnelBottom = { x1: x + 5, y1: y + 7.5, x2: x + 7, y2: y + 7.5 };
+	ctx.beginPath();
+	ctx.moveTo(funnelTop.x1, funnelTop.y1);
+	ctx.lineTo(funnelTop.x2, funnelTop.y2);
+	ctx.lineTo(funnelMid.x, funnelMid.y);
+	ctx.closePath();
+	ctx.fillStyle = isActive ? theme.selection.stroke : theme.icon.muted;
+	ctx.fill();
+	ctx.beginPath();
+	ctx.moveTo(funnelBottom.x1, funnelBottom.y1);
+	ctx.lineTo(funnelBottom.x2, funnelBottom.y2);
+	ctx.lineWidth = 1.5;
+	ctx.strokeStyle = isActive ? theme.selection.stroke : theme.icon.muted;
+	ctx.stroke();
+	// Small badge dot for active state
+	if (isActive) {
+		ctx.beginPath();
+		ctx.arc(x + 10.5, y + 2.5, 2, 0, Math.PI * 2);
+		ctx.fillStyle = theme.selection.stroke;
+		ctx.fill();
+	}
+	ctx.restore();
 }

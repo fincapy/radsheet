@@ -18,6 +18,8 @@
 	import { keymap, createKeymapHandler } from './commands/keymap.js';
 	import { createRenderContext } from './render/createRenderContext.js';
 	import EditorOverlay from '../EditorOverlay.svelte';
+	import FilterPopover from '../FilterPopover.svelte';
+	import { SheetView } from '../../domain/view/SheetView.js';
 	import { localXY, yToRowInHeader } from './math.js';
 	import { resolveTheme } from './theme.js';
 	let { theme: themeInput = 'light', data: dataInput, editable = false } = $props();
@@ -84,6 +86,16 @@
 
 	// Domain model (source of truth for cell values)
 	let sheet = $state.raw(new Sheet());
+	// View model for filtering/sorting without mutating sheet
+	let sheetView = $state.raw(new SheetView(sheet));
+	let filterVersion = $state(0);
+	// Filter UI state
+	let filterOpen = $state(false);
+	let filterColumn = $state(null);
+	let filterValues = $state([]); // [{ value, checked }]
+	let activeFilterCols = $state(new Set());
+	let filterSpecByCol = $state(new Map()); // col -> Set(values)
+	let filteringEnabled = $state(false);
 	const addColumns = () => {
 		executeWithRerender(() => {
 			sheet.addColumns(26);
@@ -91,11 +103,11 @@
 	};
 	// include sheetVersion so UI reacts when columns are added
 	const columnLabels = $derived((sheetVersion, sheet.columnLabels));
-	const readCell = (r, c) => sheet.getValue(r, c);
+	const readCell = (r, c) => sheetView.getValue(r, c);
 	const writeCell = (r, c, v) =>
 		executeWithRerender(() => {
 			// include anchor metadata so undo can restore anchor position
-			sheet.transact(() => sheet.setValue(r, c, v), {
+			sheet.transact(() => sheetView.setValue(r, c, v), {
 				anchorRow: anchorRow ?? r,
 				anchorCol: anchorCol ?? c
 			});
@@ -191,6 +203,57 @@
 	function closeContextMenu() {
 		ctxOpen = false;
 	}
+
+	// Filtering helpers
+	function openFilterForColumn(col) {
+		filterColumn = col;
+		// collect unique values from the underlying sheet for the column (not filtered)
+		const valuesSet = new Set();
+		for (let r = 0; r < sheet.numRows; r++) {
+			valuesSet.add(sheet.getValue(r, col));
+		}
+		const existing = filterSpecByCol.get(col);
+		filterValues = Array.from(valuesSet).map((v) => ({
+			value: v,
+			checked: !existing || existing.has(v)
+		}));
+		filterOpen = true;
+	}
+
+	function applyFiltersFromPopover(values) {
+		if (filterColumn == null) return;
+		const selected = new Set(values.filter((x) => x.checked).map((x) => x.value));
+		if (selected.size === values.length) {
+			// all selected => clear filter for this col
+			filterSpecByCol.delete(filterColumn);
+			activeFilterCols.delete(filterColumn);
+		} else if (selected.size === 0) {
+			// none selected => show none
+			filterSpecByCol.set(filterColumn, new Set());
+			activeFilterCols.add(filterColumn);
+		} else {
+			filterSpecByCol.set(filterColumn, selected);
+			activeFilterCols.add(filterColumn);
+		}
+		const filters = Array.from(filterSpecByCol.entries()).map(([col, set]) => ({
+			col,
+			values: Array.from(set)
+		}));
+		sheetView.setFilters(filters);
+		filterVersion++;
+		filterOpen = false;
+		scheduleRender();
+	}
+
+	function clearFilterForColumn() {
+		if (filterColumn == null) return;
+		filterSpecByCol.delete(filterColumn);
+		activeFilterCols.delete(filterColumn);
+		sheetView.setFilters([]);
+		filterVersion++;
+		filterOpen = false;
+		scheduleRender();
+	}
 	function onContextAction(type) {
 		closeContextMenu();
 		if (type === 'Undo') {
@@ -211,6 +274,15 @@
 			addRows();
 		} else if (type === 'AddColumns') {
 			addColumns();
+		} else if (
+			typeof type === 'object' &&
+			type &&
+			type.action === 'OpenFilter' &&
+			typeof type.col === 'number'
+		) {
+			// Enable filtering UI globally; do not open popover immediately
+			filteringEnabled = true;
+			scheduleRender();
 		}
 	}
 
@@ -264,8 +336,8 @@
 	const getFocusCol = () => focusCol;
 	const getLastActiveRow = () => lastActiveRow;
 	const getLastActiveCol = () => lastActiveCol;
-	const getSheetNumRows = () => sheet.numRows;
-	const getNumRows = () => sheet.numRows;
+	const getSheetNumRows = () => numRowsView;
+	const getNumRows = () => numRowsView;
 	const getColumnsLength = () => columnLabels.length;
 	const setSelecting = (v) => (selecting = v);
 	const setDragMode = (v) => (dragMode = v);
@@ -470,7 +542,7 @@
 		hoverResizeRow = typeof idx === 'number' ? idx : null;
 		scheduleRender();
 	};
-	const numRowsView = $derived((sheetVersion, sheet.numRows));
+	const numRowsView = $derived((sheetVersion, filterVersion, sheetView.visualRowCount()));
 	// Metrics and derived viewport calculations
 	const totalHeight = $derived(
 		(() => {
@@ -641,7 +713,9 @@
 			undo,
 			redo,
 			deleteSelection,
-			canEdit: () => editable
+			canEdit: () => editable,
+			openFilterForColumn: (c) => openFilterForColumn(c),
+			isFilteringEnabled: () => filteringEnabled
 		},
 		refs: {
 			getGridCanvas: () => gridCanvas,
@@ -819,7 +893,9 @@
 			getRowHeight: (r) => getRowHeight(r),
 			rowTop: (r) => rowTop(r),
 			getHoverResizeRow: () => hoverResizeRow,
-			theme: () => resolvedTheme
+			theme: () => resolvedTheme,
+			isFiltered: () => filteringEnabled,
+			getActiveFilters: () => activeFilterCols
 		});
 
 		// Ensure first paint happens after render context is ready
@@ -955,6 +1031,15 @@
 			getRowTop={(r) => rowTop(r)}
 			getRowHeight={(r) => getRowHeight(r)}
 		/>
+
+		{#if filterOpen}
+			<FilterPopover
+				values={filterValues}
+				onApply={applyFiltersFromPopover}
+				onClear={clearFilterForColumn}
+				onClose={() => (filterOpen = false)}
+			/>
+		{/if}
 	</div>
 
 	<!-- Vertical scrollbar -->
@@ -1079,6 +1164,26 @@
 					<span>Copy</span>
 				</div>
 				<span class="text-xs" style="color: var(--rs-popover-muted-text);">Ctrl+C</span>
+			</button>
+
+			<!-- Apply Filter -->
+			<button
+				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors"
+				style="color: var(--rs-popover-text);"
+				onclick={() => onContextAction({ action: 'OpenFilter', col: lastActiveCol })}
+			>
+				<div class="flex items-center gap-3">
+					<svg
+						class="h-4 w-4"
+						style="color: var(--rs-icon-muted);"
+						fill="currentColor"
+						viewBox="0 0 16 16"
+						aria-hidden="true"
+					>
+						<path d="M2 3h12l-5 6v4l-2 1V9L2 3z" />
+					</svg>
+					<span>Apply Filter…</span>
+				</div>
 			</button>
 
 			{#if editable}

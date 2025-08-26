@@ -9,7 +9,7 @@
 	let sheetRef;
 	let isLoading = $state(false);
 	let rowsLoaded = $state(0);
-	let targetRows = $state(1_000_000);
+	let targetRows = $state(10000);
 
 	async function loadServerData() {
 		if (!sheetRef || !sheetRef.setData) return;

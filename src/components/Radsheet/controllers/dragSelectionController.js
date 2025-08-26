@@ -175,6 +175,19 @@ export function createDragSelectionController({ getters, setters, methods, refs,
 			return;
 		}
 		const col = methods.xToColInHeader(x);
+		// If near the filter icon area on the right side of the header cell, open filter popover
+		if (methods.openFilterForColumn) {
+			const rightAbs = methods.getColLeft(col + 1);
+			const rightLocal = rightAbs - getters.getScrollLeft();
+			if (x >= rightLocal - 24 && x <= rightLocal - 4) {
+				// Only open if filtering UI is enabled
+				if (methods.isFilteringEnabled && methods.isFilteringEnabled()) {
+					methods.openFilterForColumn(col);
+					return;
+				}
+				return;
+			}
+		}
 		beginSelection('col', 0, col, e);
 	}
 	function onColHeadPointerMove(e) {

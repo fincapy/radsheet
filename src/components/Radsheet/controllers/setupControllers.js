@@ -145,7 +145,9 @@ export function setupControllers({
 			setHoverResizeCol: methods.setHoverResizeCol,
 			getRowEdgeNearY: methods.getRowEdgeNearY,
 			setRowHeight: methods.setRowHeight,
-			getRowTop: methods.getRowTop
+			getRowTop: methods.getRowTop,
+			openFilterForColumn: methods.openFilterForColumn,
+			isFilteringEnabled: methods.isFilteringEnabled
 		},
 		refs,
 		constants
