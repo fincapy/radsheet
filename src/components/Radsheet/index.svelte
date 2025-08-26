@@ -113,11 +113,40 @@
 	let ctxOpen = $state(false);
 	let ctxX = $state(0);
 	let ctxY = $state(0);
+	let ctxMenuEl = $state(null);
+
 	function openContextMenu(e) {
 		e.preventDefault();
-		ctxX = e.clientX;
-		ctxY = e.clientY;
+		const clickX = e.clientX;
+		const clickY = e.clientY;
+
+		// Set initial position
+		ctxX = clickX;
+		ctxY = clickY;
 		ctxOpen = true;
+
+		// Use nextTick to ensure the menu is rendered before calculating position
+		setTimeout(() => {
+			if (ctxMenuEl) {
+				const menuRect = ctxMenuEl.getBoundingClientRect();
+				const windowWidth = window.innerWidth;
+				const windowHeight = window.innerHeight;
+
+				// Check if menu would overflow right edge
+				if (clickX + menuRect.width > windowWidth) {
+					ctxX = Math.max(0, windowWidth - menuRect.width - 8);
+				}
+
+				// Check if menu would overflow bottom edge
+				if (clickY + menuRect.height > windowHeight) {
+					ctxY = Math.max(0, windowHeight - menuRect.height - 8);
+				}
+
+				// Ensure menu doesn't go off the left or top edges
+				ctxX = Math.max(0, ctxX);
+				ctxY = Math.max(0, ctxY);
+			}
+		}, 0);
 	}
 	function closeContextMenu() {
 		ctxOpen = false;
@@ -871,6 +900,7 @@
 
 	{#if ctxOpen}
 		<div
+			bind:this={ctxMenuEl}
 			class="fixed z-50 w-56 rounded-lg border border-gray-200 bg-white shadow-xl backdrop-blur-sm"
 			style="left:{ctxX}px; top:{ctxY}px;"
 			role="menu"
