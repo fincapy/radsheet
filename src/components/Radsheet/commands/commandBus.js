@@ -53,7 +53,10 @@ export function createCommandBus({ getters, setters, controllers, methods }) {
 				controllers.selection.handleCopy();
 				break;
 			case 'PasteFromClipboard':
-				controllers.selection.handlePaste(payload.text);
+				controllers.selection.handlePaste(payload ? payload.text : undefined);
+				break;
+			case 'DeleteSelection':
+				if (methods && methods.deleteSelection) methods.deleteSelection();
 				break;
 			// History Commands
 			case 'Undo':

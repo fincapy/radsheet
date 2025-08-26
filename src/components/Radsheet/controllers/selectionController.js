@@ -221,6 +221,20 @@ export function createSelectionController({ getters, setters, controllers }) {
 		}
 	}
 
+	function deleteSelection(deleteToNull = true) {
+		const sel = getSelection();
+		if (!sel) {
+			// single cell
+			const r = getters.getLastActiveRow();
+			const c = getters.getLastActiveCol();
+			controllers.triggerRedraw();
+			return (controllers.editor.updateEditorValue, void 0);
+		}
+
+		// Use domain transaction for block deletion via UI-level contract:
+		// The `sheet` is not directly accessible here; deletion is exposed via methods.deleteSelection in command bus
+	}
+
 	return {
 		getSelection,
 		setCell,

@@ -33,16 +33,124 @@
 
 	// Domain model (source of truth for cell values)
 	let sheet = $state.raw(new Sheet());
+	// Reactive column labels (start with A..Z, allow appending blocks like AA..AZ)
+	let columnLabels = $state([...columns]);
+	function addColumns() {
+		// Determine which two-letter block to add next: AA..AZ, BA..BZ, ...
+		const baseCount = 26;
+		const extra = Math.max(0, columnLabels.length - baseCount);
+		const nextBlockIndex = Math.floor(extra / baseCount); // 0 -> 'A', 1 -> 'B', ...
+		if (nextBlockIndex >= 26) return; // Cap at 'Z' prefix for now
+		const prefix = String.fromCharCode(65 + nextBlockIndex);
+		const newLabels = Array.from({ length: 26 }, (_, i) => prefix + String.fromCharCode(65 + i));
+		for (const lbl of newLabels) columnLabels.push(lbl);
+		// Grow column widths for new columns at default width
+		for (let i = 0; i < 26; i++) colWidths.push(CELL_WIDTH);
+		// Update Fenwick capacity for columns
+		colFenwick.setMax(columnLabels.length);
+		scheduleRender();
+	}
+
 	const readCell = (r, c) => sheet.getValue(r, c);
 	const writeCell = (r, c, v) =>
 		executeWithRerender(() => {
-			sheet.transact(() => sheet.setValue(r, c, v));
+			// include anchor metadata so undo can restore anchor position
+			sheet.transact(() => sheet.setValue(r, c, v), {
+				anchorRow: anchorRow ?? r,
+				anchorCol: anchorCol ?? c
+			});
 		});
 	const addRows = () => executeWithRerender(() => sheet.addRows(1000));
+	const undo = () =>
+		executeWithRerender(() => {
+			const meta = sheet.undo();
+			if (meta && typeof meta === 'object') {
+				if (typeof meta.anchorRow === 'number') {
+					setAnchorRow(meta.anchorRow);
+					setFocusRow(meta.anchorRow);
+					setLastActiveRow(meta.anchorRow);
+				}
+				if (typeof meta.anchorCol === 'number') {
+					setAnchorCol(meta.anchorCol);
+					setFocusCol(meta.anchorCol);
+					setLastActiveCol(meta.anchorCol);
+				}
+			}
+		});
+	const redo = () =>
+		executeWithRerender(() => {
+			const meta = sheet.redo();
+			if (meta && typeof meta === 'object') {
+				if (typeof meta.anchorRow === 'number') {
+					setAnchorRow(meta.anchorRow);
+					setFocusRow(meta.anchorRow);
+					setLastActiveRow(meta.anchorRow);
+				}
+				if (typeof meta.anchorCol === 'number') {
+					setAnchorCol(meta.anchorCol);
+					setFocusCol(meta.anchorCol);
+					setLastActiveCol(meta.anchorCol);
+				}
+			}
+		});
+	const deleteSelection = () =>
+		executeWithRerender(() => {
+			const sel = selection ? selection.getSelection() : null;
+			if (sel) {
+				sheet.transact(() => sheet.deleteBlock(sel.r1, sel.c1, sel.r2, sel.c2), {
+					anchorRow: sel.r1,
+					anchorCol: sel.c1
+				});
+			} else {
+				sheet.transact(
+					() => sheet.deleteBlock(lastActiveRow, lastActiveCol, lastActiveRow, lastActiveCol),
+					{ anchorRow: lastActiveRow, anchorCol: lastActiveCol }
+				);
+			}
+		});
 
-	// History closures
-	const undo = () => executeWithRerender(() => sheet.undo());
-	const redo = () => executeWithRerender(() => sheet.redo());
+	// Context menu state
+	let ctxOpen = $state(false);
+	let ctxX = $state(0);
+	let ctxY = $state(0);
+	function openContextMenu(e) {
+		e.preventDefault();
+		ctxX = e.clientX;
+		ctxY = e.clientY;
+		ctxOpen = true;
+	}
+	function closeContextMenu() {
+		ctxOpen = false;
+	}
+	function onContextAction(type) {
+		closeContextMenu();
+		if (type === 'Undo') {
+			undo();
+		} else if (type === 'Redo') {
+			redo();
+		} else if (type === 'Copy') {
+			commandBus.dispatch({ type: 'CopySelection' });
+		} else if (type === 'Paste') {
+			commandBus.dispatch({ type: 'PasteFromClipboard' });
+		} else if (type === 'Cut') {
+			// Cut = Copy + Delete
+			commandBus.dispatch({ type: 'CopySelection' });
+			deleteSelection();
+		} else if (type === 'Delete') {
+			deleteSelection();
+		} else if (type === 'AddRows') {
+			addRows();
+		} else if (type === 'AddColumns') {
+			addColumns();
+		}
+	}
+
+	function selectAll() {
+		const lastRow = Math.max(0, sheet.numRows - 1);
+		const lastCol = Math.max(0, columnLabels.length - 1);
+		selection.setRange(0, 0, lastRow, lastCol);
+		scheduleRender();
+	}
 
 	// Viewport + layout state
 	let scrollTop = $state(0);
@@ -89,7 +197,7 @@
 	const getLastActiveCol = () => lastActiveCol;
 	const getSheetNumRows = () => sheet.numRows;
 	const getNumRows = () => sheet.numRows;
-	const getColumnsLength = () => columns.length;
+	const getColumnsLength = () => columnLabels.length;
 	const setSelecting = (v) => (selecting = v);
 	const setDragMode = (v) => (dragMode = v);
 	const setAnchorRow = (v) => (anchorRow = v);
@@ -101,7 +209,7 @@
 	const setIsSelectionCopied = (v) => (isSelectionCopied = v);
 
 	// Column widths and helpers (variable widths)
-	let colWidths = $state(columns.map(() => CELL_WIDTH));
+	let colWidths = $state(columnLabels.map(() => CELL_WIDTH));
 	const MIN_COL_WIDTH = 40;
 	function getColWidth(c) {
 		return colWidths[c] ?? CELL_WIDTH;
@@ -132,7 +240,7 @@
 	const colFenwick = new SparseFenwick();
 	const rowFenwick = new SparseFenwick();
 	// initialize capacities
-	colFenwick.setMax(columns.length);
+	colFenwick.setMax(columnLabels.length);
 
 	function setColumnWidth(c, w) {
 		const clamped = Math.max(MIN_COL_WIDTH, Math.round(w));
@@ -151,14 +259,14 @@
 	function xToColVariable(x) {
 		const target = x + scrollLeft;
 		let lo = 0;
-		let hi = columns.length;
+		let hi = columnLabels.length;
 		while (lo < hi) {
 			const mid = (lo + hi) >> 1;
 			const rightEdge = (mid + 1) * CELL_WIDTH + colFenwick.sum(mid + 1);
 			if (rightEdge > target) hi = mid;
 			else lo = mid + 1;
 		}
-		return Math.max(0, Math.min(columns.length - 1, lo));
+		return Math.max(0, Math.min(columnLabels.length - 1, lo));
 	}
 	function pointToCellVariable(x, y) {
 		const col = xToColVariable(x);
@@ -169,7 +277,7 @@
 	function getColEdgeNearX(x, threshold = 5) {
 		// returns index of column to resize if near a right edge, else null
 		let acc = 0;
-		for (let c = 0; c < columns.length; c++) {
+		for (let c = 0; c < columnLabels.length; c++) {
 			const w = getColWidth(c);
 			const edgeAbs = acc + w;
 			const edgeLocal = edgeAbs - scrollLeft;
@@ -249,9 +357,9 @@
 	// Keep Fenwick capacities in sync with dynamic sizes
 	$effect(() => {
 		// react to changes
-		columns;
+		columnLabels;
 		sheet.numRows;
-		colFenwick.setMax(columns.length);
+		colFenwick.setMax(columnLabels.length);
 		rowFenwick.setMax(sheet.numRows);
 	});
 	function getRowEdgeNearY(y, threshold = 5) {
@@ -270,7 +378,7 @@
 		const padY = 6;
 		let maxLines = 0; // 0 means empty -> snap to default height
 		let hasContent = false;
-		const maxColsToScan = Math.min(columns.length, 200);
+		const maxColsToScan = Math.min(columnLabels.length, 200);
 		for (let c = 0; c < maxColsToScan; c++) {
 			const v = readCell(rowIndex, c);
 			if (v != null && v !== '') {
@@ -303,19 +411,21 @@
 		hoverResizeRow = typeof idx === 'number' ? idx : null;
 		scheduleRender();
 	};
-
+	const numRowsView = $derived((sheetVersion, sheet.numRows));
 	// Metrics and derived viewport calculations
 	const totalHeight = $derived(
 		(() => {
 			rowHeights;
+			numRowsView; // ensure reactivity when rows are added via sheetVersion
 			// default total + cumulative adjustments
-			return sheet.numRows * CELL_HEIGHT + rowFenwick.sum(sheet.numRows);
+			return numRowsView * CELL_HEIGHT + rowFenwick.sum(numRowsView);
 		})()
 	);
 	const totalWidth = $derived(
 		(() => {
 			colWidths;
-			return columns.length * CELL_WIDTH + colFenwick.sum(columns.length);
+			columnLabels;
+			return columnLabels.length * CELL_WIDTH + colFenwick.sum(columnLabels.length);
 		})()
 	);
 
@@ -323,8 +433,9 @@
 	const startIndexRow = $derived(
 		(() => {
 			rowHeights;
+			numRowsView; // depend on numRowsView for reactivity
 			let lo = 0;
-			let hi = sheet.numRows;
+			let hi = numRowsView;
 			const target = scrollTop;
 			while (lo < hi) {
 				const mid = (lo + hi) >> 1;
@@ -332,33 +443,32 @@
 				if (rightEdge > target) hi = mid;
 				else lo = mid + 1;
 			}
-			return Math.max(0, Math.min(sheet.numRows, lo));
+			return Math.max(0, Math.min(numRowsView, lo));
 		})()
 	);
 	const endIndexRow = $derived(
 		(() => {
 			rowHeights;
+			numRowsView; // depend on numRowsView for reactivity
 			const target = scrollTop + containerHeight;
 			let lo = 0;
-			let hi = sheet.numRows;
+			let hi = numRowsView;
 			while (lo < hi) {
 				const mid = (lo + hi) >> 1;
 				const topAtMid = mid * CELL_HEIGHT + rowFenwick.sum(mid);
 				if (topAtMid >= target) hi = mid;
 				else lo = mid + 1;
 			}
-			return Math.max(0, Math.min(sheet.numRows, lo));
+			return Math.max(0, Math.min(numRowsView, lo));
 		})()
 	);
 	const visibleRowCount = $derived(endIndexRow - startIndexRow);
 
-	// Expose reactive numRows for template/props updates on addRows()
-	const numRowsView = $derived((sheetVersion, sheet.numRows));
 	const startIndexCol = $derived(
 		(() => {
 			colWidths;
 			let lo = 0;
-			let hi = columns.length;
+			let hi = columnLabels.length;
 			const target = scrollLeft;
 			while (lo < hi) {
 				const mid = (lo + hi) >> 1;
@@ -366,7 +476,7 @@
 				if (rightEdge > target) hi = mid;
 				else lo = mid + 1;
 			}
-			return Math.max(0, Math.min(columns.length, lo));
+			return Math.max(0, Math.min(columnLabels.length, lo));
 		})()
 	);
 	const endIndexCol = $derived(
@@ -374,14 +484,14 @@
 			colWidths;
 			const target = scrollLeft + containerWidth;
 			let lo = 0;
-			let hi = columns.length;
+			let hi = columnLabels.length;
 			while (lo < hi) {
 				const mid = (lo + hi) >> 1;
 				const leftAtMid = mid * CELL_WIDTH + colFenwick.sum(mid);
 				if (leftAtMid >= target) hi = mid;
 				else lo = mid + 1;
 			}
-			return Math.max(0, Math.min(columns.length, lo));
+			return Math.max(0, Math.min(columnLabels.length, lo));
 		})()
 	);
 	const visibleColCount = $derived(endIndexCol - startIndexCol);
@@ -453,6 +563,7 @@
 				drawHeaders();
 				drawGrid();
 			},
+			sheetTransact: (fn, meta) => sheet.transact(fn, meta),
 			drawHeaders: () => drawHeaders(),
 			drawGrid: () => drawGrid(),
 			localXY: (el, e) => localXY(el, e),
@@ -469,7 +580,8 @@
 			getRowTop: (r) => rowTop(r),
 			setHoverResizeCol: (idx) => setHoverResizeCol(idx),
 			undo,
-			redo
+			redo,
+			deleteSelection
 		},
 		refs: {
 			getGridCanvas: () => gridCanvas,
@@ -588,7 +700,7 @@
 			CELL_HEIGHT,
 			COLUMN_HEADER_HEIGHT,
 			ROW_HEADER_WIDTH,
-			columns,
+			columns: columnLabels,
 			scrollLeft: () => scrollLeft,
 			scrollTop: () => scrollTop,
 			startIndexCol: () => startIndexCol,
@@ -625,14 +737,52 @@
 	});
 </script>
 
-<svelte:window onkeydown={onKeyDown} onpaste={onPaste} />
+<svelte:window
+	onkeydown={(e) => {
+		if (ctxOpen && e.key === 'Escape') {
+			closeContextMenu();
+			return;
+		}
+		onKeyDown(e);
+	}}
+	onpaste={onPaste}
+	onclick={() => {
+		if (ctxOpen) closeContextMenu();
+	}}
+/>
 
 <div
 	class="grid h-full w-full border border-gray-300 bg-white"
 	style="grid-template-columns: {ROW_HEADER_WIDTH}px 1fr {SCROLLBAR_SIZE}px; grid-template-rows: {COLUMN_HEADER_HEIGHT}px 1fr {SCROLLBAR_SIZE}px;"
+	oncontextmenu={openContextMenu}
+	role="application"
 >
-	<!-- TL corner -->
-	<div class="border-r border-b border-gray-300 bg-gray-50"></div>
+	<!-- TL corner (Select all) -->
+	<div
+		class="flex items-center justify-center border-r border-b border-gray-300"
+		role="button"
+		aria-label="Select all"
+		tabindex="0"
+		title="Select all"
+		onclick={selectAll}
+		onkeydown={(e) => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault();
+				selectAll();
+			}
+		}}
+	>
+		<svg
+			class="h-3.5 w-3.5 text-gray-500"
+			viewBox="0 0 16 16"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="1"
+			aria-hidden="true"
+		>
+			<path d="M2 2h12v12H2z" />
+		</svg>
+	</div>
 
 	<!-- Column headers -->
 	<div class="relative overflow-hidden border-b border-gray-300 bg-gray-50">
@@ -719,23 +869,162 @@
 	<!-- BR filler -->
 	<div class="border-t border-l border-gray-300 bg-gray-50"></div>
 
-	<div class="col-span-3 flex items-center gap-2 p-2">
-		<button class="rounded border px-2 py-1" onclick={addRows}>add 1000 rows</button>
-		{#if sheet.chunkStore}
-			<button class="rounded border px-2 py-1" onclick={saveToDisk}>save to disk</button>
-		{/if}
-		<div class="text-sm text-gray-500">
-			rows: {numRowsView}, cols: {columns.length}
-			{#if sheet.chunkStore}
-				| cache: {Math.round(sheet.estimatedBytesInHotCache() / 1024)}KB
-				{#if isPersisting}
-					| saving...
-				{:else if lastPersistTime > 0}
-					| saved {Math.round((Date.now() - lastPersistTime) / 1000)}s ago
-				{/if}
-			{/if}
+	{#if ctxOpen}
+		<div
+			class="fixed z-50 w-56 rounded-lg border border-gray-200 bg-white shadow-xl backdrop-blur-sm"
+			style="left:{ctxX}px; top:{ctxY}px;"
+			role="menu"
+			tabindex="0"
+			onclick={(e) => e.stopPropagation()}
+			onkeydown={(e) => {
+				if (e.key === 'Escape') closeContextMenu();
+			}}
+			oncontextmenu={(e) => e.preventDefault()}
+		>
+			<!-- Undo -->
+			<button
+				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+				onclick={() => onContextAction('Undo')}
+				disabled={!sheet.canUndo()}
+			>
+				<div class="flex items-center gap-3">
+					<svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
+						/>
+					</svg>
+					<span>Undo</span>
+				</div>
+				<span class="text-xs text-gray-400">Ctrl+Z</span>
+			</button>
+
+			<!-- Redo -->
+			<button
+				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+				onclick={() => onContextAction('Redo')}
+				disabled={!sheet.canRedo()}
+			>
+				<div class="flex items-center gap-3">
+					<svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M21 10h-10a8 8 0 00-8 8v2M21 10l-6 6m6-6l-6-6"
+						/>
+					</svg>
+					<span>Redo</span>
+				</div>
+				<span class="text-xs text-gray-400">Ctrl+Y</span>
+			</button>
+
+			<!-- Divider -->
+			<div class="my-1 border-t border-gray-100"></div>
+
+			<!-- Copy -->
+			<button
+				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100"
+				onclick={() => onContextAction('Copy')}
+			>
+				<div class="flex items-center gap-3">
+					<svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+						/>
+					</svg>
+					<span>Copy</span>
+				</div>
+				<span class="text-xs text-gray-400">Ctrl+C</span>
+			</button>
+
+			<!-- Paste -->
+			<button
+				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100"
+				onclick={() => onContextAction('Paste')}
+			>
+				<div class="flex items-center gap-3">
+					<svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+						/>
+					</svg>
+					<span>Paste</span>
+				</div>
+				<span class="text-xs text-gray-400">Ctrl+V</span>
+			</button>
+
+			<!-- Divider -->
+			<div class="my-1 border-t border-gray-100"></div>
+
+			<!-- Delete -->
+			<button
+				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100"
+				onclick={() => onContextAction('Delete')}
+			>
+				<div class="flex items-center gap-3">
+					<svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+						/>
+					</svg>
+					<span>Delete</span>
+				</div>
+				<span class="text-xs text-gray-400">Delete</span>
+			</button>
+
+			<!-- Divider -->
+			<div class="my-1 border-t border-gray-100"></div>
+
+			<!-- Add Rows -->
+			<button
+				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100"
+				onclick={() => onContextAction('AddRows')}
+			>
+				<div class="flex items-center gap-3">
+					<svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M12 4v16m8-8H4"
+						/>
+					</svg>
+					<span>Add 1000 Rows</span>
+				</div>
+			</button>
+
+			<!-- Add Columns -->
+			<button
+				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100"
+				onclick={() => onContextAction('AddColumns')}
+			>
+				<div class="flex items-center gap-3">
+					<svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M12 4v16m8-8H4"
+						/>
+					</svg>
+					<span>Add A–Z Columns</span>
+				</div>
+			</button>
 		</div>
-	</div>
+		<!-- window handlers are integrated into the main <svelte:window> above -->
+	{/if}
 </div>
 
 <style>

@@ -66,12 +66,14 @@ export class Sheet {
 		this._lastAccessedChunkKey = '';
 
 		// --- Undo/Redo state ---
-		/** @type {{ r:number, c:number, prev:CellValue, next:CellValue }[][]} */
+		/** @type {{ ops:{ r:number, c:number, prev:CellValue, next:CellValue }[], meta?:{anchorRow?:number, anchorCol?:number} }[]} */
 		this._undoStack = [];
-		/** @type {{ r:number, c:number, prev:CellValue, next:CellValue }[][]} */
+		/** @type {{ ops:{ r:number, c:number, prev:CellValue, next:CellValue }[], meta?:{anchorRow?:number, anchorCol?:number} }[]} */
 		this._redoStack = [];
 		/** @type {{ r:number, c:number, prev:CellValue, next:CellValue }[]|null} */
 		this._currentTransaction = null;
+		/** @type {{anchorRow?:number, anchorCol?:number}|null} */
+		this._currentMeta = null;
 		/** @type {Map<string, number>|null} */
 		this._txnIndexByCell = null;
 		/** @type {boolean} */
@@ -83,12 +85,12 @@ export class Sheet {
 	 * If already in a transaction, it executes inline.
 	 * @param {() => void} fn
 	 */
-	transact(fn) {
+	transact(fn, meta) {
 		if (this._currentTransaction) {
 			fn();
 			return;
 		}
-		this.beginTransaction();
+		this.beginTransaction(meta);
 		try {
 			fn();
 			this.commitTransaction();
@@ -96,25 +98,29 @@ export class Sheet {
 			// Discard on error
 			this._currentTransaction = null;
 			this._txnIndexByCell = null;
+			this._currentMeta = null;
 			throw err;
 		}
 	}
 
 	/** Starts an explicit transaction */
-	beginTransaction() {
+	beginTransaction(meta) {
 		if (this._currentTransaction) return; // nested supported as no-op
 		this._currentTransaction = [];
 		this._txnIndexByCell = new Map();
+		this._currentMeta = meta || null;
 	}
 
 	/** Commits the current transaction onto the undo stack */
 	commitTransaction() {
 		if (!this._currentTransaction) return;
-		const tx = this._currentTransaction;
+		const txOps = this._currentTransaction;
+		const meta = this._currentMeta || undefined;
 		this._currentTransaction = null;
 		this._txnIndexByCell = null;
-		if (tx.length > 0) {
-			this._undoStack.push(tx);
+		this._currentMeta = null;
+		if (txOps.length > 0) {
+			this._undoStack.push({ ops: txOps, meta });
 			this._redoStack.length = 0; // clear
 		}
 	}
@@ -122,40 +128,80 @@ export class Sheet {
 	/** Undo last committed transaction */
 	undo() {
 		if (this._currentTransaction) this.commitTransaction();
-		const tx = this._undoStack.pop();
-		if (!tx) return false;
+		const txn = this._undoStack.pop();
+		if (!txn) return false;
 		this._isApplyingHistory = true;
 		try {
 			// Apply in reverse order
-			for (let i = tx.length - 1; i >= 0; i--) {
-				const { r, c, prev } = tx[i];
+			for (let i = txn.ops.length - 1; i >= 0; i--) {
+				const { r, c, prev } = txn.ops[i];
 				if (prev === '' || prev == null) this.deleteValue(r, c);
 				else this.setValue(r, c, prev);
 			}
 		} finally {
 			this._isApplyingHistory = false;
 		}
-		this._redoStack.push(tx);
-		return true;
+		this._redoStack.push(txn);
+		return txn.meta || true;
 	}
 
 	/** Redo last undone transaction */
 	redo() {
 		if (this._currentTransaction) this.commitTransaction();
-		const tx = this._redoStack.pop();
-		if (!tx) return false;
+		const txn = this._redoStack.pop();
+		if (!txn) return false;
 		this._isApplyingHistory = true;
 		try {
-			for (let i = 0; i < tx.length; i++) {
-				const { r, c, next } = tx[i];
+			for (let i = 0; i < txn.ops.length; i++) {
+				const { r, c, next } = txn.ops[i];
 				if (next === '' || next == null) this.deleteValue(r, c);
 				else this.setValue(r, c, next);
 			}
 		} finally {
 			this._isApplyingHistory = false;
 		}
-		this._undoStack.push(tx);
-		return true;
+		this._undoStack.push(txn);
+		return txn.meta || true;
+	}
+
+	/**
+	 * Deletes all values in a rectangular block (inclusive coordinates).
+	 * Operation is recorded as a single transaction for undo/redo.
+	 * @param {number} topRow
+	 * @param {number} leftCol
+	 * @param {number} bottomRow
+	 * @param {number} rightCol
+	 * @returns {number} Number of cells that changed from non-empty to empty
+	 */
+	deleteBlock(topRow, leftCol, bottomRow, rightCol) {
+		if (topRow > bottomRow || leftCol > rightCol) return 0;
+		const startedHere = !this._currentTransaction;
+		if (startedHere) this.beginTransaction();
+		let deleteCount = 0;
+		for (let r = topRow; r <= bottomRow; r++) {
+			for (let c = leftCol; c <= rightCol; c++) {
+				const prev = this.getValue(r, c);
+				if (prev !== null) {
+					this.deleteValue(r, c);
+					deleteCount++;
+				}
+			}
+		}
+		if (startedHere) this.commitTransaction();
+		return deleteCount;
+	}
+
+	/** Indicates if there is a transaction to undo */
+	canUndo() {
+		return (
+			this._undoStack.length > 0 ||
+			(this._currentTransaction && this._currentTransaction.length > 0)
+		);
+	}
+
+	/** Indicates if there is a transaction to redo */
+	canRedo() {
+		return this._redoStack.length > 0;
 	}
 
 	/** @private */

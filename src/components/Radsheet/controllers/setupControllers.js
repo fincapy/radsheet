@@ -46,10 +46,18 @@ export function setupControllers({
 			serializeRangeToTSV: ed.serializeRangeToTSV,
 			serializeRangeToTSVAsync: ed.serializeRangeToTSVAsync,
 			deserializeTSV: (r, c, text) => {
-				// Use editor setters to write block through domain
-				if (ed.deserializeTSV) {
-					const { rows, cols } = ed.deserializeTSV(r, c, text);
-					// No-op here; UI redraw handled by outer triggerRedraws
+				// Wrap small pastes in a transaction with anchor metadata
+				if (ed.deserializeTSV && methods && methods.sheetTransact) {
+					let rows = 0;
+					let cols = 0;
+					methods.sheetTransact(
+						() => {
+							const res = ed.deserializeTSV(r, c, text);
+							rows = res.rows;
+							cols = res.cols;
+						},
+						{ anchorRow: r, anchorCol: c }
+					);
 					return { rows, cols };
 				}
 				return { rows: 0, cols: 0 };

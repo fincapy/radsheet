@@ -103,6 +103,35 @@ export function createDragSelectionController({ getters, setters, methods, refs,
 	// Pointer handlers - GRID
 	function onGridPointerDown(e) {
 		const canvas = refs.getGridCanvas();
+		// Right-click: preserve existing range selection; if single-cell selection, move it
+		if (e && e.button === 2) {
+			const { x, y } = methods.localXY(canvas, e);
+			lastPointer = { x, y };
+			const { row, col } = methods.pointToCell(x, y);
+			const sel = methods.getSelection ? methods.getSelection() : null;
+			const isRange = !!(sel && (sel.r1 !== sel.r2 || sel.c1 !== sel.c2));
+			const isInsideRange = !!(
+				sel &&
+				row >= sel.r1 &&
+				row <= sel.r2 &&
+				col >= sel.c1 &&
+				col <= sel.c2
+			);
+			// If not a range, or click is outside current range, move selection
+			if (!isRange || !isInsideRange) {
+				// Move single selection to the right-clicked cell
+				setters.setAnchorRow(row);
+				setters.setAnchorCol(col);
+				setters.setFocusRow(row);
+				setters.setFocusCol(col);
+				setters.setLastActiveRow(row);
+				setters.setLastActiveCol(col);
+				setters.setIsSelectionCopied(false);
+				methods.drawHeaders();
+				methods.drawGrid();
+			}
+			return; // Do not start drag selection on right-click
+		}
 		canvas.setPointerCapture(e.pointerId);
 		const { x, y } = methods.localXY(canvas, e);
 		lastPointer = { x, y };
@@ -127,6 +156,10 @@ export function createDragSelectionController({ getters, setters, methods, refs,
 	// Pointer handlers - COLUMN HEADER
 	function onColHeadPointerDown(e) {
 		const canvas = refs.getColHeadCanvas();
+		// Ignore right-click to preserve existing selection
+		if (e && e.button === 2) {
+			return;
+		}
 		canvas.setPointerCapture(e.pointerId);
 		const { x } = methods.localXY(canvas, e);
 		lastPointer = { x, y: 0 };
@@ -188,6 +221,10 @@ export function createDragSelectionController({ getters, setters, methods, refs,
 	// Pointer handlers - ROW HEADER
 	function onRowHeadPointerDown(e) {
 		const canvas = refs.getRowHeadCanvas();
+		// Ignore right-click to preserve existing selection
+		if (e && e.button === 2) {
+			return;
+		}
 		canvas.setPointerCapture(e.pointerId);
 		const { y } = methods.localXY(canvas, e);
 		lastPointer = { x: 0, y };

@@ -63,7 +63,9 @@ export const keymap = {
 		'Ctrl+Shift+z': { type: 'Redo' },
 		'Meta+Shift+z': { type: 'Redo' },
 		'Ctrl+y': { type: 'Redo' },
-		'Meta+y': { type: 'Redo' }
+		'Meta+y': { type: 'Redo' },
+		Delete: { type: 'DeleteSelection' },
+		Backspace: { type: 'DeleteSelection' }
 	},
 	editing: {
 		Enter: { type: 'CommitEditorAndMove', payload: { dr: 1, dc: 0 } },
