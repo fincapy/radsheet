@@ -108,7 +108,19 @@ export function drawGrid(opts) {
 		const vR1 = Math.max(r1, startIndexRow);
 		const vR2 = Math.min(r2, endIndexRow - 1);
 
-		// If any part is visible, paint the fill clipped to viewport
+		// Precompute anchor cell rect in local space
+		const anchorX0 = (colLeft ? colLeft(anchorCol) : anchorCol * CELL_WIDTH) - baseLeft;
+		const anchorX1 =
+			(colLeft
+				? colLeft(anchorCol) + (getColWidth ? getColWidth(anchorCol) : CELL_WIDTH)
+				: (anchorCol + 1) * CELL_WIDTH) - baseLeft;
+		const anchorY0 = (rowTop ? rowTop(anchorRow) : anchorRow * CELL_HEIGHT) - baseTop;
+		const anchorY1 =
+			(rowTop
+				? rowTop(anchorRow) + (getRowHeight ? getRowHeight(anchorRow) : CELL_HEIGHT)
+				: (anchorRow + 1) * CELL_HEIGHT) - baseTop;
+
+		// If any part is visible, paint the fill clipped to viewport, excluding the anchor cell area
 		if (vC1 <= vC2 && vR1 <= vR2) {
 			const x0 = (colLeft ? colLeft(vC1) : vC1 * CELL_WIDTH) - baseLeft;
 			const x1 =
@@ -120,8 +132,19 @@ export function drawGrid(opts) {
 				(rowTop
 					? rowTop(vR2) + (getRowHeight ? getRowHeight(vR2) : CELL_HEIGHT)
 					: (vR2 + 1) * CELL_HEIGHT) - baseTop;
-			ctx.fillStyle = 'rgba(59,130,246,0.12)';
-			ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+			// Skip fill entirely when selection is a single cell (hole would remove all fill anyway)
+			if (!(r1 === r2 && c1 === c2)) {
+				ctx.save();
+				ctx.beginPath();
+				// Outer selection rect
+				ctx.rect(x0, y0, x1 - x0, y1 - y0);
+				// Inner hole: anchor cell rect
+				ctx.rect(anchorX0, anchorY0, anchorX1 - anchorX0, anchorY1 - anchorY0);
+				ctx.fillStyle = 'rgba(59,130,246,0.12)';
+				// Use even-odd rule to exclude the inner rect
+				ctx.fill('evenodd');
+				ctx.restore();
+			}
 		}
 
 		// Draw the thick border only on visible edges
@@ -141,6 +164,12 @@ export function drawGrid(opts) {
 			for (let k = startIndexRow; k < endIndexRow; k++) sum += getRowHeight(k);
 			return sum;
 		})();
+		// Local-space y coordinate of the viewport bottom after translation.
+		// Using this avoids stepwise jumps when the viewport crosses row boundaries.
+		const viewportBottomLocalY = containerHeight + scrollTop - baseTop;
+		// Local-space x coordinate of the viewport right after translation.
+		// Using this avoids stepwise jumps when the viewport crosses column boundaries.
+		const viewportRightLocalX = containerWidth + scrollLeft - baseLeft;
 		const selX0 = (colLeft ? colLeft(c1) : c1 * CELL_WIDTH) - baseLeft;
 		const selX1 =
 			(colLeft
@@ -153,97 +182,192 @@ export function drawGrid(opts) {
 				: (r2 + 1) * CELL_HEIGHT) - baseTop;
 		const isTopAtBoundary = selY0 <= 0;
 		const isLeftAtBoundary = selX0 <= 0;
-		const isRightAtBoundary = selX1 >= viewW - 1; // tolerate 1px underflow
-		const isBottomAtBoundary = selY1 >= viewH;
+		const isRightAtBoundary = selX1 >= viewportRightLocalX - 1; // tolerate 1px underflow
+		const isBottomAtBoundary = selY1 >= viewportBottomLocalY;
+		const anchorOnTop = anchorRow === r1;
+		const anchorOnBottom = anchorRow === r2;
+		const anchorOnLeft = anchorCol === c1;
+		const anchorOnRight = anchorCol === c2;
 
-		// Top edge visible?
-		if (r1 >= startIndexRow) {
-			const a = Math.max(selX0, 0);
-			const b = Math.min(selX1, viewW);
-			if (a < b) {
-				if (isTopAtBoundary) {
+		// Draw selection outer edges only when selection spans more than one cell
+		if (!(r1 === r2 && c1 === c2)) {
+			// Top edge visible?
+			if (r1 >= startIndexRow) {
+				const a = Math.max(selX0, 0);
+				const b = Math.min(selX1, viewportRightLocalX);
+				if (a < b) {
+					if (isTopAtBoundary) {
+						ctx.fillStyle = ctx.strokeStyle;
+						if (anchorOnTop) {
+							const s1 = Math.min(anchorX0, b);
+							const s2 = Math.max(anchorX1, a);
+							if (a < s1) ctx.fillRect(a, 0, s1 - a, 2);
+							if (s2 < b) ctx.fillRect(s2, 0, b - s2, 2);
+						} else {
+							ctx.fillRect(a, 0, b - a, 2);
+						}
+					} else {
+						if (anchorOnTop) {
+							const s1 = Math.min(anchorX0, b);
+							const s2 = Math.max(anchorX1, a);
+							if (a < s1) {
+								ctx.beginPath();
+								ctx.moveTo(a, selY0);
+								ctx.lineTo(s1, selY0);
+								ctx.stroke();
+							}
+							if (s2 < b) {
+								ctx.beginPath();
+								ctx.moveTo(s2, selY0);
+								ctx.lineTo(b, selY0);
+								ctx.stroke();
+							}
+						} else {
+							ctx.beginPath();
+							ctx.moveTo(a, selY0);
+							ctx.lineTo(b, selY0);
+							ctx.stroke();
+						}
+					}
+				}
+			}
+			// Bottom edge visible fully within viewport (not at bottom boundary)
+			if (r2 < endIndexRow - 1) {
+				const a = Math.max(selX0, 0);
+				const b = Math.min(selX1, viewportRightLocalX);
+				if (a < b) {
+					if (anchorOnBottom) {
+						const s1 = Math.min(anchorX0, b);
+						const s2 = Math.max(anchorX1, a);
+						if (a < s1) {
+							ctx.beginPath();
+							ctx.moveTo(a, selY1);
+							ctx.lineTo(s1, selY1);
+							ctx.stroke();
+						}
+						if (s2 < b) {
+							ctx.beginPath();
+							ctx.moveTo(s2, selY1);
+							ctx.lineTo(b, selY1);
+							ctx.stroke();
+						}
+					} else {
+						ctx.beginPath();
+						ctx.moveTo(a, selY1);
+						ctx.lineTo(b, selY1);
+						ctx.stroke();
+					}
+				}
+			}
+			// If bottom edge coincides with viewport boundary, draw a filled strip to avoid clipping
+			else if (r2 === endIndexRow - 1 && isBottomAtBoundary) {
+				const a = Math.max(selX0, 0);
+				const b = Math.min(selX1, viewportRightLocalX);
+				if (a < b) {
 					ctx.fillStyle = ctx.strokeStyle;
-					ctx.fillRect(a, 0, b - a, 2);
-				} else {
-					ctx.beginPath();
-					ctx.moveTo(a, selY0);
-					ctx.lineTo(b, selY0);
-					ctx.stroke();
+					if (anchorOnBottom) {
+						const s1 = Math.min(anchorX0, b);
+						const s2 = Math.max(anchorX1, a);
+						if (a < s1) ctx.fillRect(a, viewportBottomLocalY - 2, s1 - a, 2);
+						if (s2 < b) ctx.fillRect(s2, viewportBottomLocalY - 2, b - s2, 2);
+					} else {
+						ctx.fillRect(a, viewportBottomLocalY - 2, b - a, 2);
+					}
+				}
+			}
+			// Left edge visible?
+			if (c1 >= startIndexCol) {
+				const a = Math.max(selY0, 0);
+				const b = Math.min(selY1, viewportBottomLocalY);
+				if (a < b) {
+					if (isLeftAtBoundary) {
+						ctx.fillStyle = ctx.strokeStyle;
+						if (anchorOnLeft) {
+							const s1 = Math.min(anchorY0, b);
+							const s2 = Math.max(anchorY1, a);
+							if (a < s1) ctx.fillRect(0, a, 2, s1 - a);
+							if (s2 < b) ctx.fillRect(0, s2, 2, b - s2);
+						} else {
+							ctx.fillRect(0, a, 2, b - a);
+						}
+					} else {
+						if (anchorOnLeft) {
+							const s1 = Math.min(anchorY0, b);
+							const s2 = Math.max(anchorY1, a);
+							if (a < s1) {
+								ctx.beginPath();
+								ctx.moveTo(selX0, a);
+								ctx.lineTo(selX0, s1);
+								ctx.stroke();
+							}
+							if (s2 < b) {
+								ctx.beginPath();
+								ctx.moveTo(selX0, s2);
+								ctx.lineTo(selX0, b);
+								ctx.stroke();
+							}
+						} else {
+							ctx.beginPath();
+							ctx.moveTo(selX0, a);
+							ctx.lineTo(selX0, b);
+							ctx.stroke();
+						}
+					}
+				}
+			}
+			// Right edge visible?
+			if (c2 < endIndexCol - 1) {
+				const a = Math.max(selY0, 0);
+				const b = Math.min(selY1, viewportBottomLocalY);
+				if (a < b) {
+					if (anchorOnRight) {
+						const s1 = Math.min(anchorY0, b);
+						const s2 = Math.max(anchorY1, a);
+						if (a < s1) {
+							ctx.beginPath();
+							ctx.moveTo(selX1, a);
+							ctx.lineTo(selX1, s1);
+							ctx.stroke();
+						}
+						if (s2 < b) {
+							ctx.beginPath();
+							ctx.moveTo(selX1, s2);
+							ctx.lineTo(selX1, b);
+							ctx.stroke();
+						}
+					} else {
+						ctx.beginPath();
+						ctx.moveTo(selX1, a);
+						ctx.lineTo(selX1, b);
+						ctx.stroke();
+					}
+				}
+			}
+			// If right edge coincides with viewport boundary, draw a filled strip to avoid clipping
+			else if (c2 === endIndexCol - 1 && isRightAtBoundary) {
+				const a = Math.max(selY0, 0);
+				const b = Math.min(selY1, viewportBottomLocalY);
+				if (a < b) {
+					ctx.fillStyle = ctx.strokeStyle;
+					if (anchorOnRight) {
+						const s1 = Math.min(anchorY0, b);
+						const s2 = Math.max(anchorY1, a);
+						if (a < s1) ctx.fillRect(viewportRightLocalX - 2, a, 2, s1 - a);
+						if (s2 < b) ctx.fillRect(viewportRightLocalX - 2, s2, 2, b - s2);
+					} else {
+						ctx.fillRect(viewportRightLocalX - 2, a, 2, b - a);
+					}
 				}
 			}
 		}
-		// Bottom edge visible?
-		if (r2 < endIndexRow - 1) {
-			const a = Math.max(selX0, 0);
-			const b = Math.min(selX1, viewW);
-			if (a < b) {
-				ctx.beginPath();
-				ctx.moveTo(a, selY1);
-				ctx.lineTo(b, selY1);
-				ctx.stroke();
-			}
-		}
-		// If bottom edge coincides with viewport boundary, draw a filled strip to avoid clipping
-		else if (isBottomAtBoundary) {
-			const a = Math.max(selX0, 0);
-			const b = Math.min(selX1, viewW);
-			if (a < b) {
-				ctx.fillStyle = ctx.strokeStyle;
-				ctx.fillRect(a, viewH - 2, b - a, 2);
-			}
-		}
-		// Left edge visible?
-		if (c1 >= startIndexCol) {
-			const a = Math.max(selY0, 0);
-			const b = Math.min(selY1, viewH);
-			if (a < b) {
-				if (isLeftAtBoundary) {
-					ctx.fillStyle = ctx.strokeStyle;
-					ctx.fillRect(0, a, 2, b - a);
-				} else {
-					ctx.beginPath();
-					ctx.moveTo(selX0, a);
-					ctx.lineTo(selX0, b);
-					ctx.stroke();
-				}
-			}
-		}
-		// Right edge visible?
-		if (c2 < endIndexCol - 1) {
-			const a = Math.max(selY0, 0);
-			const b = Math.min(selY1, viewH);
-			if (a < b) {
-				ctx.beginPath();
-				ctx.moveTo(selX1, a);
-				ctx.lineTo(selX1, b);
-				ctx.stroke();
-			}
-		}
-		// If right edge coincides with viewport boundary, draw a filled strip to avoid clipping
-		else if (isRightAtBoundary) {
-			const a = Math.max(selY0, 0);
-			const b = Math.min(selY1, viewH);
-			if (a < b) {
-				ctx.fillStyle = ctx.strokeStyle;
-				ctx.fillRect(viewW - 2, a, 2, b - a);
-			}
-		}
 
-		// Anchor cell highlight box (originally clicked cell)
-		if (r1 !== r2 || c1 !== c2) {
-			const ax = (anchorCol - startIndexCol) * CELL_WIDTH;
-			const baseAy = rowTop ? rowTop(startIndexRow) : startIndexRow * CELL_HEIGHT;
-			const ay = (rowTop ? rowTop(anchorRow) : anchorRow * CELL_HEIGHT) - baseAy;
+		// Anchor cell highlight box (originally clicked cell), always outline only
+		{
 			ctx.save();
 			ctx.strokeStyle = '#3b82f6';
 			ctx.lineWidth = 2;
 			ctx.setLineDash([]);
-			ctx.strokeRect(
-				ax + 1,
-				ay + 1,
-				CELL_WIDTH - 2,
-				(getRowHeight ? getRowHeight(anchorRow) : CELL_HEIGHT) - 2
-			);
+			ctx.strokeRect(anchorX0, anchorY0, anchorX1 - anchorX0, anchorY1 - anchorY0);
 			ctx.restore();
 		}
 	}

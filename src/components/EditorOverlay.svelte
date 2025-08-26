@@ -33,11 +33,11 @@
 		class="editor absolute z-20 border-2 border-blue-500 bg-white px-2 text-sm outline-none"
 		bind:this={inputEl}
 		style="left: {(getColLeft ? getColLeft(editorState.col) : editorState.col * CELL_WIDTH) -
-			scrollLeft}px; top: {(getRowTop
-			? getRowTop(editorState.row)
-			: editorState.row * CELL_HEIGHT) - scrollTop}px; width: {getColWidth
-			? getColWidth(editorState.col)
-			: CELL_WIDTH}px; height: {getRowHeight ? getRowHeight(editorState.row) : CELL_HEIGHT}px;"
+			scrollLeft -
+			1}px; top: {(getRowTop ? getRowTop(editorState.row) : editorState.row * CELL_HEIGHT) -
+			scrollTop -
+			1}px; width: {(getColWidth ? getColWidth(editorState.col) : CELL_WIDTH) +
+			2}px; height: {(getRowHeight ? getRowHeight(editorState.row) : CELL_HEIGHT) + 2}px;"
 		value={editorState.value}
 		oninput={(e) =>
 			commandBus.dispatch({ type: 'UpdateEditorValue', payload: { value: e.currentTarget.value } })}

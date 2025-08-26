@@ -617,7 +617,7 @@
 <svelte:window onkeydown={onKeyDown} onpaste={onPaste} />
 
 <div
-	class="grid h-full w-full bg-white"
+	class="grid h-full w-full border border-gray-300 bg-white"
 	style="grid-template-columns: {ROW_HEADER_WIDTH}px 1fr {SCROLLBAR_SIZE}px; grid-template-rows: {COLUMN_HEADER_HEIGHT}px 1fr {SCROLLBAR_SIZE}px;"
 >
 	<!-- TL corner -->
