@@ -704,6 +704,35 @@
 		}
 	}
 
+	export const setData = (data, startingRow = 0, startingCol = 0) => {
+		const rowCount = data.length;
+		const colCount = data[0]?.length ?? 0;
+		if (rowCount === 0 || colCount === 0) return;
+
+		const BATCH_ROWS = 500; // tweakable for smoothness vs throughput
+		let rowIndex = 0;
+
+		function processChunk() {
+			const end = Math.min(rowIndex + BATCH_ROWS, rowCount);
+
+			// feed directly, no extra slice — avoid copies
+			for (let r = rowIndex; r < end; r++) {
+				sheet.setDataFromObjects([data[r]], startingRow + r, startingCol);
+			}
+
+			scheduleRender(); // rerender after this batch
+
+			rowIndex = end;
+			if (rowIndex < rowCount) {
+				// yield to browser: let it render and handle input
+				requestAnimationFrame(processChunk);
+			}
+		}
+
+		requestAnimationFrame(processChunk);
+		return { lastRow: rowIndex };
+	};
+
 	// Input handler
 	const onKeyDown = createKeymapHandler(keymap, commandBus);
 

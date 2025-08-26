@@ -4,6 +4,11 @@
 	function toggleTheme() {
 		themeOption = themeOption === 'dark' ? 'light' : 'dark';
 	}
+	const data = $state([
+		{ name: 'Alice', age: 25 },
+		{ name: 'Bob', age: 30 },
+		{ name: 'Charlie', age: 35 }
+	]);
 </script>
 
 <main class="flex h-screen w-full flex-col items-center justify-center">
@@ -14,6 +19,6 @@
 		</button>
 	</div>
 	<div class="h-100 w-11/12">
-		<Radsheet theme={themeOption} />
+		<Radsheet theme={themeOption} {data} />
 	</div>
 </main>

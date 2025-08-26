@@ -493,6 +493,21 @@ export class Sheet {
 		return total;
 	}
 
+	setDataFromObjects(objects, startingRow = 0, startingCol = 0) {
+		if (!objects || objects.length === 0) return;
+		const stableKeys = Object.keys(objects[0]);
+		for (let i = 0; i < objects.length; i++) {
+			const obj = objects[i];
+			this.addRows(1);
+			for (let j = 0; j < stableKeys.length; j++) {
+				const key = stableKeys[j];
+				this.setValue(startingRow + i, startingCol + j, obj[key]);
+			}
+		}
+		this.numRows = Math.ceil(this.numRows / 1000) * 1000;
+		this.numCols = Math.ceil((startingCol + stableKeys.length) / 26) * 26;
+	}
+
 	/**
 	 * Gets the chunk key for the given global coordinates
 	 * @private
