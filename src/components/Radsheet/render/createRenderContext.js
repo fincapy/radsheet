@@ -40,7 +40,7 @@ export function createRenderContext(env) {
 				ROW_HEADER_WIDTH: env.ROW_HEADER_WIDTH,
 				CELL_WIDTH: env.CELL_WIDTH,
 				CELL_HEIGHT: env.CELL_HEIGHT,
-				columns: env.columns,
+				columns: typeof env.columns === 'function' ? env.columns() : env.columns,
 				scrollLeft: env.scrollLeft(),
 				scrollTop: env.scrollTop(),
 				startIndexCol: env.startIndexCol(),

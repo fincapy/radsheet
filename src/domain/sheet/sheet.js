@@ -49,6 +49,35 @@ import {
 import { createSparseChunk, createDenseChunk } from '../chunk/ChunkFactory.js';
 import { makeChunkKey, computeLocalIndexWithinChunk } from '../chunk/ChunkCoordinates.js';
 
+const columns = [
+	'A',
+	'B',
+	'C',
+	'D',
+	'E',
+	'F',
+	'G',
+	'H',
+	'I',
+	'J',
+	'K',
+	'L',
+	'M',
+	'N',
+	'O',
+	'P',
+	'Q',
+	'R',
+	'S',
+	'T',
+	'U',
+	'V',
+	'W',
+	'X',
+	'Y',
+	'Z'
+];
+
 /**
  * The Sheet class is the central entity for all spreadsheet operations.
  * It is the vanilla javascript memory and logic engine that powers all operations
@@ -58,6 +87,9 @@ export class Sheet {
 	constructor() {
 		/** @type {number} */
 		this.numRows = 1000;
+		/** @type {number} */
+		this.numCols = 27;
+		this.columnLabels = Array.from({ length: this.numCols }, (_, i) => this._indexToColumnLabel(i));
 		/** @type {GlobalStringTable} */
 		this.globalStringTable = new GlobalStringTable();
 		/** @type {Map<string, Chunk>} */
@@ -78,6 +110,25 @@ export class Sheet {
 		this._txnIndexByCell = null;
 		/** @type {boolean} */
 		this._isApplyingHistory = false;
+		this._setDataRowCount = 0;
+	}
+
+	// given an index, return the column label A-Z, AA-AZ, etc.
+	_indexToColumnLabel(index) {
+		if (index < 26) {
+			// First 26 indexes: A-Z
+			return columns[index];
+		} else {
+			// Beyond 26: AA, AB, AC, etc.
+			const firstChar = columns[Math.floor((index - 26) / 26)];
+			const secondChar = columns[(index - 26) % 26];
+			return firstChar + secondChar;
+		}
+	}
+
+	addColumns(additionalCols = 26) {
+		this.numCols += additionalCols;
+		this.columnLabels = Array.from({ length: this.numCols }, (_, i) => this._indexToColumnLabel(i));
 	}
 
 	/**
@@ -498,14 +549,21 @@ export class Sheet {
 		const stableKeys = Object.keys(objects[0]);
 		for (let i = 0; i < objects.length; i++) {
 			const obj = objects[i];
-			this.addRows(1);
+			this._setDataRowCount++;
 			for (let j = 0; j < stableKeys.length; j++) {
 				const key = stableKeys[j];
 				this.setValue(startingRow + i, startingCol + j, obj[key]);
 			}
 		}
-		this.numRows = Math.ceil(this.numRows / 1000) * 1000;
-		this.numCols = Math.ceil((startingCol + stableKeys.length) / 26) * 26;
+		if (stableKeys.length > this.numCols) {
+			this.numCols = stableKeys.length;
+			this.columnLabels = Array.from({ length: stableKeys.length }, (_, i) =>
+				this._indexToColumnLabel(i)
+			);
+		}
+		if (this._setDataRowCount > this.numRows) {
+			this.numRows = this._setDataRowCount;
+		}
 	}
 
 	/**

@@ -20,10 +20,15 @@
 	import EditorOverlay from '../EditorOverlay.svelte';
 	import { localXY, yToRowInHeader } from './math.js';
 	import { resolveTheme } from './theme.js';
-	let { theme: themeInput = 'light' } = $props();
+	let { theme: themeInput = 'light', data: dataInput } = $props();
 	let resolvedTheme = $state(resolveTheme(themeInput));
+
 	$effect(() => {
-		// Recompute when parent updates theme prop
+		setData(dataInput);
+		console.log('sheet', sheet.numRows, sheet.numCols);
+	});
+
+	$effect(() => {
 		themeInput;
 		resolvedTheme = resolveTheme(themeInput);
 	});
@@ -79,24 +84,13 @@
 
 	// Domain model (source of truth for cell values)
 	let sheet = $state.raw(new Sheet());
-	// Reactive column labels (start with A..Z, allow appending blocks like AA..AZ)
-	let columnLabels = $state([...columns]);
-	function addColumns() {
-		// Determine which two-letter block to add next: AA..AZ, BA..BZ, ...
-		const baseCount = 26;
-		const extra = Math.max(0, columnLabels.length - baseCount);
-		const nextBlockIndex = Math.floor(extra / baseCount); // 0 -> 'A', 1 -> 'B', ...
-		if (nextBlockIndex >= 26) return; // Cap at 'Z' prefix for now
-		const prefix = String.fromCharCode(65 + nextBlockIndex);
-		const newLabels = Array.from({ length: 26 }, (_, i) => prefix + String.fromCharCode(65 + i));
-		for (const lbl of newLabels) columnLabels.push(lbl);
-		// Grow column widths for new columns at default width
-		for (let i = 0; i < 26; i++) colWidths.push(CELL_WIDTH);
-		// Update Fenwick capacity for columns
-		colFenwick.setMax(columnLabels.length);
-		scheduleRender();
-	}
-
+	const addColumns = () => {
+		executeWithRerender(() => {
+			sheet.addColumns(26);
+		});
+	};
+	// include sheetVersion so UI reacts when columns are added
+	const columnLabels = $derived((sheetVersion, sheet.columnLabels));
 	const readCell = (r, c) => sheet.getValue(r, c);
 	const writeCell = (r, c, v) =>
 		executeWithRerender(() => {
@@ -284,7 +278,7 @@
 	const setIsSelectionCopied = (v) => (isSelectionCopied = v);
 
 	// Column widths and helpers (variable widths)
-	let colWidths = $state(columnLabels.map(() => CELL_WIDTH));
+	let colWidths = $derived(columnLabels.map(() => CELL_WIDTH));
 	const MIN_COL_WIDTH = 40;
 	function getColWidth(c) {
 		return colWidths[c] ?? CELL_WIDTH;
@@ -314,8 +308,6 @@
 
 	const colFenwick = new SparseFenwick();
 	const rowFenwick = new SparseFenwick();
-	// initialize capacities
-	colFenwick.setMax(columnLabels.length);
 
 	function setColumnWidth(c, w) {
 		const clamped = Math.max(MIN_COL_WIDTH, Math.round(w));
@@ -429,14 +421,6 @@
 		return Math.max(0, Math.min(sheet.numRows - 1, lo));
 	}
 
-	// Keep Fenwick capacities in sync with dynamic sizes
-	$effect(() => {
-		// react to changes
-		columnLabels;
-		sheet.numRows;
-		colFenwick.setMax(columnLabels.length);
-		rowFenwick.setMax(sheet.numRows);
-	});
 	function getRowEdgeNearY(y, threshold = 5) {
 		let acc = 0;
 		for (let r = 0; r < sheet.numRows; r++) {
@@ -705,11 +689,9 @@
 	}
 
 	export const setData = (data, startingRow = 0, startingCol = 0) => {
+		if (!data || data.length === 0) return;
 		const rowCount = data.length;
-		const colCount = data[0]?.length ?? 0;
-		if (rowCount === 0 || colCount === 0) return;
-
-		const BATCH_ROWS = 500; // tweakable for smoothness vs throughput
+		const BATCH_ROWS = 1000; // tweakable for smoothness vs throughput
 		let rowIndex = 0;
 
 		function processChunk() {
@@ -720,6 +702,8 @@
 				sheet.setDataFromObjects([data[r]], startingRow + r, startingCol);
 			}
 
+			// bump version so derived sizes/labels recompute and UI expands
+			sheetVersion++;
 			scheduleRender(); // rerender after this batch
 
 			rowIndex = end;
@@ -790,6 +774,8 @@
 		endIndexRow;
 		endIndexCol;
 		sheetVersion;
+		colFenwick.setMax(sheet.numCols);
+		rowFenwick.setMax(sheet.numRows);
 		scheduleRender();
 	});
 
@@ -811,7 +797,7 @@
 			CELL_HEIGHT,
 			COLUMN_HEADER_HEIGHT,
 			ROW_HEADER_WIDTH,
-			columns: columnLabels,
+			columns: () => columnLabels,
 			scrollLeft: () => scrollLeft,
 			scrollTop: () => scrollTop,
 			startIndexCol: () => startIndexCol,
