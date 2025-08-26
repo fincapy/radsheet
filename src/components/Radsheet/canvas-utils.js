@@ -11,12 +11,17 @@
  * - Returns a 2D rendering context with a scaling transform applied
  */
 export function setupCanvas2d(canvas, cssWidth, cssHeight) {
-	const dpr = Math.max(1, window.devicePixelRatio || 1);
-	canvas.width = Math.max(1, Math.floor(cssWidth * dpr));
-	canvas.height = Math.max(1, Math.floor(cssHeight * dpr));
+	const dpr = window.devicePixelRatio || 1;
+
 	canvas.style.width = cssWidth + 'px';
 	canvas.style.height = cssHeight + 'px';
+
+	canvas.width = Math.round(cssWidth * dpr);
+	canvas.height = Math.round(cssHeight * dpr);
+
 	const ctx = canvas.getContext('2d');
-	ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+	ctx.setTransform(1, 0, 0, 1, 0, 0); // reset
+	ctx.scale(dpr, dpr);
+
 	return ctx;
 }

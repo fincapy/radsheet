@@ -48,7 +48,7 @@ export function drawGrid(opts) {
 
 	// grid lines
 	ctx.strokeStyle = '#e5e7eb';
-	ctx.lineWidth = 1;
+	ctx.lineWidth = 1.5;
 	const viewportWidthPx = (() => {
 		if (!getColWidth) return visibleColCount * CELL_WIDTH;
 		let sum = 0;
@@ -71,7 +71,7 @@ export function drawGrid(opts) {
 	}
 
 	// text
-	ctx.font = '12px Inter, system-ui, sans-serif';
+	ctx.font = '14px Inter, system-ui, sans-serif';
 	ctx.fillStyle = '#111827';
 	ctx.textBaseline = 'middle';
 	const padX = 8;
@@ -149,7 +149,7 @@ export function drawGrid(opts) {
 
 		// Draw the thick border only on visible edges
 		ctx.strokeStyle = '#3b82f6';
-		ctx.lineWidth = 2;
+		ctx.lineWidth = 1.5;
 
 		// Set line dash for dotted border when copied
 		if (isSelectionCopied) {
@@ -201,10 +201,10 @@ export function drawGrid(opts) {
 						if (anchorOnTop) {
 							const s1 = Math.min(anchorX0, b);
 							const s2 = Math.max(anchorX1, a);
-							if (a < s1) ctx.fillRect(a, 0, s1 - a, 2);
-							if (s2 < b) ctx.fillRect(s2, 0, b - s2, 2);
+							if (a < s1) ctx.fillRect(a, 0, s1 - a, 1.5);
+							if (s2 < b) ctx.fillRect(s2, 0, b - s2, 1.5);
 						} else {
-							ctx.fillRect(a, 0, b - a, 2);
+							ctx.fillRect(a, 0, b - a, 1.5);
 						}
 					} else {
 						if (anchorOnTop) {
@@ -264,14 +264,27 @@ export function drawGrid(opts) {
 				const a = Math.max(selX0, 0);
 				const b = Math.min(selX1, viewportRightLocalX);
 				if (a < b) {
-					ctx.fillStyle = ctx.strokeStyle;
+					const y = Math.min(selY1 - 0.75, viewportBottomLocalY - 0.75);
 					if (anchorOnBottom) {
 						const s1 = Math.min(anchorX0, b);
 						const s2 = Math.max(anchorX1, a);
-						if (a < s1) ctx.fillRect(a, viewportBottomLocalY - 2, s1 - a, 2);
-						if (s2 < b) ctx.fillRect(s2, viewportBottomLocalY - 2, b - s2, 2);
+						if (a < s1) {
+							ctx.beginPath();
+							ctx.moveTo(a, y);
+							ctx.lineTo(s1, y);
+							ctx.stroke();
+						}
+						if (s2 < b) {
+							ctx.beginPath();
+							ctx.moveTo(s2, y);
+							ctx.lineTo(b, y);
+							ctx.stroke();
+						}
 					} else {
-						ctx.fillRect(a, viewportBottomLocalY - 2, b - a, 2);
+						ctx.beginPath();
+						ctx.moveTo(a, y);
+						ctx.lineTo(b, y);
+						ctx.stroke();
 					}
 				}
 			}
@@ -285,10 +298,10 @@ export function drawGrid(opts) {
 						if (anchorOnLeft) {
 							const s1 = Math.min(anchorY0, b);
 							const s2 = Math.max(anchorY1, a);
-							if (a < s1) ctx.fillRect(0, a, 2, s1 - a);
-							if (s2 < b) ctx.fillRect(0, s2, 2, b - s2);
+							if (a < s1) ctx.fillRect(0, a, 1.5, s1 - a);
+							if (s2 < b) ctx.fillRect(0, s2, 1.5, b - s2);
 						} else {
-							ctx.fillRect(0, a, 2, b - a);
+							ctx.fillRect(0, a, 1.5, b - a);
 						}
 					} else {
 						if (anchorOnLeft) {
@@ -348,14 +361,27 @@ export function drawGrid(opts) {
 				const a = Math.max(selY0, 0);
 				const b = Math.min(selY1, viewportBottomLocalY);
 				if (a < b) {
-					ctx.fillStyle = ctx.strokeStyle;
+					const x = viewportRightLocalX - 0.75;
 					if (anchorOnRight) {
 						const s1 = Math.min(anchorY0, b);
 						const s2 = Math.max(anchorY1, a);
-						if (a < s1) ctx.fillRect(viewportRightLocalX - 2, a, 2, s1 - a);
-						if (s2 < b) ctx.fillRect(viewportRightLocalX - 2, s2, 2, b - s2);
+						if (a < s1) {
+							ctx.beginPath();
+							ctx.moveTo(x, a);
+							ctx.lineTo(x, s1);
+							ctx.stroke();
+						}
+						if (s2 < b) {
+							ctx.beginPath();
+							ctx.moveTo(x, s2);
+							ctx.lineTo(x, b);
+							ctx.stroke();
+						}
 					} else {
-						ctx.fillRect(viewportRightLocalX - 2, a, 2, b - a);
+						ctx.beginPath();
+						ctx.moveTo(x, a);
+						ctx.lineTo(x, b);
+						ctx.stroke();
 					}
 				}
 			}
@@ -365,9 +391,80 @@ export function drawGrid(opts) {
 		{
 			ctx.save();
 			ctx.strokeStyle = '#3b82f6';
-			ctx.lineWidth = 2;
+			ctx.lineWidth = 1.5;
 			ctx.setLineDash([]);
-			ctx.strokeRect(anchorX0, anchorY0, anchorX1 - anchorX0, anchorY1 - anchorY0);
+
+			// Edge-aware drawing to avoid clipping at viewport boundaries
+			const leftX = anchorX0;
+			const rightX = anchorX1;
+			const topY = anchorY0;
+			const bottomY = anchorY1;
+
+			const xA = Math.max(leftX, 0);
+			const xB = Math.min(rightX, viewportRightLocalX);
+			const yA = Math.max(topY, 0);
+			const yB = Math.min(bottomY, viewportBottomLocalY);
+
+			// Top edge
+			if (topY <= 0) {
+				if (xA < xB) ((ctx.fillStyle = ctx.strokeStyle), ctx.fillRect(xA, 0, xB - xA, 1.5));
+			} else {
+				if (xA < xB) {
+					ctx.beginPath();
+					ctx.moveTo(xA, topY);
+					ctx.lineTo(xB, topY);
+					ctx.stroke();
+				}
+			}
+
+			// Bottom edge
+			if (bottomY >= viewportBottomLocalY - 0.5) {
+				if (xA < xB) {
+					const y = viewportBottomLocalY - 0.75;
+					ctx.beginPath();
+					ctx.moveTo(xA, y);
+					ctx.lineTo(xB, y);
+					ctx.stroke();
+				}
+			} else {
+				if (xA < xB) {
+					ctx.beginPath();
+					ctx.moveTo(xA, bottomY);
+					ctx.lineTo(xB, bottomY);
+					ctx.stroke();
+				}
+			}
+
+			// Left edge
+			if (leftX <= 0.5) {
+				if (yA < yB) ((ctx.fillStyle = ctx.strokeStyle), ctx.fillRect(0, yA, 1.5, yB - yA));
+			} else {
+				if (yA < yB) {
+					ctx.beginPath();
+					ctx.moveTo(leftX, yA);
+					ctx.lineTo(leftX, yB);
+					ctx.stroke();
+				}
+			}
+
+			// Right edge
+			if (rightX >= viewportRightLocalX - 1) {
+				if (yA < yB) {
+					const x = viewportRightLocalX - 0.75;
+					ctx.beginPath();
+					ctx.moveTo(x, yA);
+					ctx.lineTo(x, yB);
+					ctx.stroke();
+				}
+			} else {
+				if (yA < yB) {
+					ctx.beginPath();
+					ctx.moveTo(rightX, yA);
+					ctx.lineTo(rightX, yB);
+					ctx.stroke();
+				}
+			}
+
 			ctx.restore();
 		}
 	}

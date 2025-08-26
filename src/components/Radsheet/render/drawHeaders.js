@@ -61,7 +61,7 @@ export function drawHeaders(opts) {
 		}
 
 		// grid lines + labels
-		ctx.font = '600 12px Inter, system-ui, sans-serif';
+		ctx.font = 'normal 12px Inter, system-ui, sans-serif';
 		ctx.textBaseline = 'middle';
 		ctx.textAlign = 'center';
 		for (let c = startIndexCol; c < endIndexCol; c++) {
@@ -145,7 +145,7 @@ export function drawHeaders(opts) {
 		}
 
 		// lines + numbers
-		ctx.font = '600 12px Inter, system-ui, sans-serif';
+		ctx.font = 'normal 12px Inter, system-ui, sans-serif';
 		ctx.textBaseline = 'middle';
 		ctx.textAlign = 'center';
 		ctx.fillStyle = '#475569';
