@@ -29,14 +29,18 @@ export function drawHeaders(opts) {
 		getHoverResizeCol,
 		getRowHeight,
 		rowTop,
-		getHoverResizeRow
+		getHoverResizeRow,
+		theme
 	} = opts;
 
 	// Column headers
 	if (colHeadCanvas) {
 		const ctx = setupCanvas2d(colHeadCanvas, containerWidth, COLUMN_HEADER_HEIGHT);
 		ctx.clearRect(0, 0, containerWidth, COLUMN_HEADER_HEIGHT);
-		ctx.fillStyle = '#f9fafb';
+		const t = theme;
+		const fontFamily = t?.font?.family || 'Inter, system-ui, sans-serif';
+		const headerFontSize = t?.font?.headerSizePx || 12;
+		ctx.fillStyle = t?.header?.background || '#f9fafb';
 		ctx.fillRect(0, 0, containerWidth, COLUMN_HEADER_HEIGHT);
 		const baseLeft = colLeft ? colLeft(startIndexCol) : startIndexCol * CELL_WIDTH;
 		const offsetX = baseLeft - scrollLeft;
@@ -55,23 +59,23 @@ export function drawHeaders(opts) {
 					(colLeft
 						? colLeft(rightCol) + (getColWidth ? getColWidth(rightCol) : CELL_WIDTH)
 						: (rightCol + 1) * CELL_WIDTH) - baseLeft;
-				ctx.fillStyle = 'rgba(59,130,246,0.15)';
+				ctx.fillStyle = t?.selection?.fillHeader || 'rgba(225,29,72,0.15)';
 				ctx.fillRect(x0, 0, x1 - x0, COLUMN_HEADER_HEIGHT);
 			}
 		}
 
 		// grid lines + labels
-		ctx.font = 'normal 12px Inter, system-ui, sans-serif';
+		ctx.font = `normal ${headerFontSize}px ${fontFamily}`;
 		ctx.textBaseline = 'middle';
 		ctx.textAlign = 'center';
 		for (let c = startIndexCol; c < endIndexCol; c++) {
 			const x = (colLeft ? colLeft(c) : c * CELL_WIDTH) - baseLeft;
 			const w = getColWidth ? getColWidth(c) : CELL_WIDTH;
-			ctx.fillStyle = '#475569';
+			ctx.fillStyle = t?.header?.text || '#475569';
 			const label = columns[c] ?? String(c);
 			ctx.fillText(label, x + w / 2, COLUMN_HEADER_HEIGHT / 2);
 
-			ctx.strokeStyle = '#e5e7eb';
+			ctx.strokeStyle = t?.header?.gridLine || '#e5e7eb';
 			ctx.lineWidth = 1;
 			ctx.beginPath();
 			ctx.moveTo(x + w + 0.5, 0.5);
@@ -89,14 +93,14 @@ export function drawHeaders(opts) {
 			const yTop = 4.5;
 			const yBot = COLUMN_HEADER_HEIGHT - 4.5;
 			// soft glow behind
-			ctx.strokeStyle = 'rgba(59,130,246,0.12)';
+			ctx.strokeStyle = t?.selection?.hoverResizeGlow || 'rgba(59,130,246,0.12)';
 			ctx.lineWidth = 6;
 			ctx.beginPath();
 			ctx.moveTo(xEdge + 0.5, yTop);
 			ctx.lineTo(xEdge + 0.5, yBot);
 			ctx.stroke();
 			// crisp center line
-			ctx.strokeStyle = '#3b82f6';
+			ctx.strokeStyle = t?.selection?.hoverResizeLine || '#3b82f6';
 			ctx.lineWidth = 1.5;
 			ctx.beginPath();
 			ctx.moveTo(xEdge + 0.5, yTop);
@@ -107,7 +111,7 @@ export function drawHeaders(opts) {
 		ctx.restore();
 
 		// bottom border
-		ctx.strokeStyle = '#d1d5db';
+		ctx.strokeStyle = t?.header?.border || '#d1d5db';
 		ctx.beginPath();
 		ctx.moveTo(0.5, COLUMN_HEADER_HEIGHT + 0.5);
 		ctx.lineTo(containerWidth + 0.5, COLUMN_HEADER_HEIGHT + 0.5);
@@ -118,7 +122,10 @@ export function drawHeaders(opts) {
 	if (rowHeadCanvas) {
 		const ctx = setupCanvas2d(rowHeadCanvas, ROW_HEADER_WIDTH, containerHeight);
 		ctx.clearRect(0, 0, ROW_HEADER_WIDTH, containerHeight);
-		ctx.fillStyle = '#f9fafb';
+		const t2 = theme;
+		const fontFamily2 = t2?.font?.family || 'Inter, system-ui, sans-serif';
+		const headerFontSize2 = t2?.font?.headerSizePx || 12;
+		ctx.fillStyle = t2?.header?.background || '#f9fafb';
 		ctx.fillRect(0, 0, ROW_HEADER_WIDTH, containerHeight);
 
 		const firstTop = rowTop ? rowTop(startIndexRow) : startIndexRow * CELL_HEIGHT;
@@ -139,16 +146,16 @@ export function drawHeaders(opts) {
 					(rowTop
 						? rowTop(botRow) + (getRowHeight ? getRowHeight(botRow) : CELL_HEIGHT)
 						: (botRow + 1) * CELL_HEIGHT) - baseY;
-				ctx.fillStyle = 'rgba(59,130,246,0.15)';
+				ctx.fillStyle = t2?.selection?.fillHeader || 'rgba(225,29,72,0.15)';
 				ctx.fillRect(0, y0, ROW_HEADER_WIDTH, y1 - y0);
 			}
 		}
 
 		// lines + numbers
-		ctx.font = 'normal 12px Inter, system-ui, sans-serif';
+		ctx.font = `normal ${headerFontSize2}px ${fontFamily2}`;
 		ctx.textBaseline = 'middle';
 		ctx.textAlign = 'center';
-		ctx.fillStyle = '#475569';
+		ctx.fillStyle = t2?.header?.text || '#475569';
 		for (let r = startIndexRow; r < endIndexRow; r++) {
 			const baseY = rowTop ? rowTop(startIndexRow) : startIndexRow * CELL_HEIGHT;
 			const y = (rowTop ? rowTop(r) : r * CELL_HEIGHT) - baseY;
@@ -158,7 +165,7 @@ export function drawHeaders(opts) {
 				y + (getRowHeight ? getRowHeight(r) : CELL_HEIGHT) / 2
 			);
 
-			ctx.strokeStyle = '#e5e7eb';
+			ctx.strokeStyle = t2?.header?.gridLine || '#e5e7eb';
 			ctx.lineWidth = 1;
 			ctx.beginPath();
 			const rh = getRowHeight ? getRowHeight(r) : CELL_HEIGHT;
@@ -180,14 +187,14 @@ export function drawHeaders(opts) {
 			const xLeft = 4.5;
 			const xRight = ROW_HEADER_WIDTH - 4.5;
 			// soft glow
-			ctx.strokeStyle = 'rgba(59,130,246,0.12)';
+			ctx.strokeStyle = t2?.selection?.hoverResizeGlow || 'rgba(59,130,246,0.12)';
 			ctx.lineWidth = 6;
 			ctx.beginPath();
 			ctx.moveTo(xLeft, yEdge + 0.5);
 			ctx.lineTo(xRight, yEdge + 0.5);
 			ctx.stroke();
 			// crisp center line
-			ctx.strokeStyle = '#3b82f6';
+			ctx.strokeStyle = t2?.selection?.hoverResizeLine || '#3b82f6';
 			ctx.lineWidth = 1.5;
 			ctx.beginPath();
 			ctx.moveTo(xLeft, yEdge + 0.5);
@@ -197,7 +204,7 @@ export function drawHeaders(opts) {
 		}
 
 		// right border
-		ctx.strokeStyle = '#d1d5db';
+		ctx.strokeStyle = t2?.header?.border || '#d1d5db';
 		ctx.beginPath();
 		ctx.moveTo(ROW_HEADER_WIDTH + 0.5, 0.5);
 		ctx.lineTo(ROW_HEADER_WIDTH + 0.5, containerHeight + 0.5);

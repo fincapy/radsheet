@@ -26,7 +26,8 @@ export function createRenderContext(env) {
 				getColWidth: env.getColWidth,
 				colLeft: env.colLeft,
 				getRowHeight: env.getRowHeight,
-				rowTop: env.rowTop
+				rowTop: env.rowTop,
+				theme: env.theme ? env.theme() : undefined
 			};
 		},
 		getHeaderParams() {
@@ -52,7 +53,8 @@ export function createRenderContext(env) {
 				getHoverResizeCol: env.getHoverResizeCol,
 				getRowHeight: env.getRowHeight,
 				rowTop: env.rowTop,
-				getHoverResizeRow: env.getHoverResizeRow
+				getHoverResizeRow: env.getHoverResizeRow,
+				theme: env.theme ? env.theme() : undefined
 			};
 		}
 	};

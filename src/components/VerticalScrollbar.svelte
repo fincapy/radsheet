@@ -79,7 +79,10 @@
 </script>
 
 {#if scrollbarVisible}
-	<div class="flex h-full w-3 flex-col border-l border-gray-300 bg-gray-100">
+	<div
+		class="flex h-full w-3 flex-col"
+		style="border-left: 1px solid var(--rs-scrollbar-border); background: var(--rs-scrollbar-track);"
+	>
 		<div
 			class="relative flex-grow"
 			bind:this={trackElement}
@@ -89,9 +92,10 @@
 			tabindex="0"
 		>
 			<div
-				class="absolute w-full rounded-full bg-gray-400 opacity-80 hover:bg-gray-500 {isDragging
-					? '!bg-gray-600'
-					: ''}"
+				class="absolute w-full rounded-full opacity-80"
+				style="background: var(--rs-scrollbar-thumb);"
+				onmouseenter={(e) => (e.currentTarget.style.background = `var(--rs-scrollbar-thumb-hover)`)}
+				onmouseleave={(e) => (e.currentTarget.style.background = `var(--rs-scrollbar-thumb)`)}
 				style:height="{thumbHeight}px"
 				style:top="{thumbPosition}px"
 				onmousedown={handleThumbMouseDown}
@@ -101,13 +105,18 @@
 			></div>
 		</div>
 		<button
-			class="flex h-3 w-3 flex-shrink-0 items-center justify-center border-t border-gray-300 bg-gray-50 hover:bg-gray-200"
+			class="flex h-3 w-3 flex-shrink-0 items-center justify-center"
+			style="border-top: 1px solid var(--rs-scrollbar-border); background: var(--rs-scrollbar-button-bg);"
+			onmouseenter={(e) =>
+				(e.currentTarget.style.background = `var(--rs-scrollbar-button-hover-bg)`)}
+			onmouseleave={(e) => (e.currentTarget.style.background = `var(--rs-scrollbar-button-bg)`)}
 			onclick={scrollUp}
 			title="Scroll up"
 			aria-label="Scroll up"
 		>
 			<svg
-				class="h-2 w-2 text-gray-600"
+				class="h-2 w-2"
+				style="color: var(--rs-scrollbar-icon);"
 				fill="none"
 				stroke="currentColor"
 				viewBox="0 0 24 24"
@@ -117,13 +126,18 @@
 			>
 		</button>
 		<button
-			class="flex h-3 w-3 flex-shrink-0 items-center justify-center border-t border-gray-300 bg-gray-50 hover:bg-gray-200"
+			class="flex h-3 w-3 flex-shrink-0 items-center justify-center"
+			style="border-top: 1px solid var(--rs-scrollbar-border); background: var(--rs-scrollbar-button-bg);"
+			onmouseenter={(e) =>
+				(e.currentTarget.style.background = `var(--rs-scrollbar-button-hover-bg)`)}
+			onmouseleave={(e) => (e.currentTarget.style.background = `var(--rs-scrollbar-button-bg)`)}
 			onclick={scrollDown}
 			title="Scroll down"
 			aria-label="Scroll down"
 		>
 			<svg
-				class="h-2 w-2 text-gray-600"
+				class="h-2 w-2"
+				style="color: var(--rs-scrollbar-icon);"
 				fill="none"
 				stroke="currentColor"
 				viewBox="0 0 24 24"

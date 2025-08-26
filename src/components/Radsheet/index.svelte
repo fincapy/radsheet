@@ -19,6 +19,52 @@
 	import { createRenderContext } from './render/createRenderContext.js';
 	import EditorOverlay from '../EditorOverlay.svelte';
 	import { localXY, yToRowInHeader } from './math.js';
+	import { resolveTheme } from './theme.js';
+	let { theme: themeInput = 'light' } = $props();
+	let resolvedTheme = $state(resolveTheme(themeInput));
+	$effect(() => {
+		// Recompute when parent updates theme prop
+		themeInput;
+		resolvedTheme = resolveTheme(themeInput);
+	});
+	const cssVars = $derived(
+		(() => {
+			const t = resolvedTheme;
+			return `
+			--rs-surface-bg: ${t.surface.background};
+			--rs-header-bg: ${t.header.background};
+			--rs-header-text: ${t.header.text};
+			--rs-header-grid: ${t.header.gridLine};
+			--rs-border: ${t.header.border};
+			--rs-grid-line: ${t.grid.lineColor};
+			--rs-grid-text: ${t.grid.text};
+			--rs-selection-stroke: ${t.selection.stroke};
+			--rs-selection-fill-grid: ${t.selection.fillGrid};
+			--rs-selection-fill-header: ${t.selection.fillHeader};
+			--rs-hover-resize-glow: ${t.selection.hoverResizeGlow};
+			--rs-hover-resize-line: ${t.selection.hoverResizeLine};
+			--rs-popover-bg: ${t.popover.background};
+			--rs-popover-border: ${t.popover.border};
+			--rs-popover-text: ${t.popover.text};
+			--rs-popover-muted-text: ${t.popover.mutedText};
+			--rs-popover-hover-bg: ${t.popover.hoverBackground};
+			--rs-icon-muted: ${t.icon.muted};
+			--rs-editor-bg: ${t.editor.background};
+			--rs-editor-text: ${t.editor.text};
+			--rs-editor-border-focus: ${t.editor.borderFocus};
+			--rs-scrollbar-track: ${t.scrollbar.track};
+			--rs-scrollbar-thumb: ${t.scrollbar.thumb};
+			--rs-scrollbar-thumb-hover: ${t.scrollbar.thumbHover};
+			--rs-scrollbar-thumb-active: ${t.scrollbar.thumbActive};
+			--rs-scrollbar-border: ${t.scrollbar.border};
+			--rs-scrollbar-button-bg: ${t.scrollbar.buttonBg};
+			--rs-scrollbar-button-hover-bg: ${t.scrollbar.buttonHoverBg};
+			--rs-scrollbar-icon: ${t.scrollbar.icon};
+			--rs-font-family: ${t.font.family};
+			--rs-font-cell-size: ${t.font.cellSizePx}px; 
+			--rs-font-header-size: ${t.font.headerSizePx}px;`;
+		})()
+	);
 	import {
 		parseTSVChunked,
 		serializeRangeToTSVAsync as serializeRangeToTSVAsyncImpl
@@ -326,7 +372,7 @@
 	function measureText(text, opts = { bold: false }) {
 		const ctx = ensureMeasureCtx();
 		if (!ctx) return 0;
-		ctx.font = `${opts.bold ? '600 ' : ''}12px Inter, system-ui, sans-serif`;
+		ctx.font = `${opts.bold ? '600 ' : ''}${resolvedTheme.font.cellSizePx}px ${resolvedTheme.font.family}`;
 		return ctx.measureText(String(text ?? '')).width;
 	}
 	function autoFitColumn(colIndex) {
@@ -684,6 +730,13 @@
 		});
 	}
 
+	// Force repaint when theme changes
+	$effect(() => {
+		resolvedTheme;
+		// Update 2d canvas paints to new theme immediately
+		scheduleRender();
+	});
+
 	// Backwards-compat shim for callers expecting immediate functions
 	function drawHeaders() {
 		scheduleRender();
@@ -748,7 +801,8 @@
 			getHoverResizeCol: () => hoverResizeCol,
 			getRowHeight: (r) => getRowHeight(r),
 			rowTop: (r) => rowTop(r),
-			getHoverResizeRow: () => hoverResizeRow
+			getHoverResizeRow: () => hoverResizeRow,
+			theme: () => resolvedTheme
 		});
 
 		// Ensure first paint happens after render context is ready
@@ -781,14 +835,15 @@
 />
 
 <div
-	class="grid h-full w-full border border-gray-300 bg-white"
-	style="grid-template-columns: {ROW_HEADER_WIDTH}px 1fr {SCROLLBAR_SIZE}px; grid-template-rows: {COLUMN_HEADER_HEIGHT}px 1fr {SCROLLBAR_SIZE}px;"
+	class="grid h-full w-full"
+	style="{cssVars}; grid-template-columns: {ROW_HEADER_WIDTH}px 1fr {SCROLLBAR_SIZE}px; grid-template-rows: {COLUMN_HEADER_HEIGHT}px 1fr {SCROLLBAR_SIZE}px; border: 1px solid var(--rs-border); background: var(--rs-surface-bg);"
 	oncontextmenu={openContextMenu}
 	role="application"
 >
 	<!-- TL corner (Select all) -->
 	<div
-		class="flex items-center justify-center border-r border-b border-gray-300"
+		class="flex items-center justify-center"
+		style="border-right: 1px solid var(--rs-border); border-bottom: 1px solid var(--rs-border);"
 		role="button"
 		aria-label="Select all"
 		tabindex="0"
@@ -802,7 +857,8 @@
 		}}
 	>
 		<svg
-			class="h-3.5 w-3.5 text-gray-500"
+			class="h-3.5 w-3.5"
+			style="color: var(--rs-icon-muted);"
 			viewBox="0 0 16 16"
 			fill="none"
 			stroke="currentColor"
@@ -814,7 +870,10 @@
 	</div>
 
 	<!-- Column headers -->
-	<div class="relative overflow-hidden border-b border-gray-300 bg-gray-50">
+	<div
+		class="relative overflow-hidden"
+		style="border-bottom: 1px solid var(--rs-border); background: var(--rs-header-bg);"
+	>
 		<canvas
 			class="canvas absolute top-0 left-0"
 			bind:this={colHeadCanvas}
@@ -828,10 +887,15 @@
 	</div>
 
 	<!-- top-right filler -->
-	<div class="border-b border-l border-gray-300 bg-gray-50"></div>
+	<div
+		style="border-bottom: 1px solid var(--rs-border); border-left: 1px solid var(--rs-border); background: var(--rs-header-bg);"
+	></div>
 
 	<!-- Row headers -->
-	<div class="relative overflow-hidden border-r border-gray-300 bg-gray-50">
+	<div
+		class="relative overflow-hidden"
+		style="border-right: 1px solid var(--rs-border); background: var(--rs-header-bg);"
+	>
 		<canvas
 			class="canvas absolute top-0 left-0"
 			bind:this={rowHeadCanvas}
@@ -885,7 +949,9 @@
 	/>
 
 	<!-- BL filler -->
-	<div class="border-t border-r border-gray-300 bg-gray-50"></div>
+	<div
+		style="border-top: 1px solid var(--rs-border); border-right: 1px solid var(--rs-border); background: var(--rs-header-bg);"
+	></div>
 
 	<!-- Horizontal scrollbar -->
 	<HorizontalScrollbar
@@ -896,13 +962,15 @@
 	/>
 
 	<!-- BR filler -->
-	<div class="border-t border-l border-gray-300 bg-gray-50"></div>
+	<div
+		style="border-top: 1px solid var(--rs-border); border-left: 1px solid var(--rs-border); background: var(--rs-header-bg);"
+	></div>
 
 	{#if ctxOpen}
 		<div
 			bind:this={ctxMenuEl}
-			class="fixed z-50 w-56 rounded-lg border border-gray-200 bg-white shadow-xl backdrop-blur-sm"
-			style="left:{ctxX}px; top:{ctxY}px;"
+			class="fixed z-50 w-56 rounded-lg shadow-xl backdrop-blur-sm"
+			style="background: var(--rs-popover-bg); color: var(--rs-popover-text); border: 1px solid var(--rs-popover-border); left:{ctxX}px; top:{ctxY}px;"
 			role="menu"
 			tabindex="0"
 			onclick={(e) => e.stopPropagation()}
@@ -913,12 +981,19 @@
 		>
 			<!-- Undo -->
 			<button
-				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+				style="color: var(--rs-popover-text);"
 				onclick={() => onContextAction('Undo')}
 				disabled={!sheet.canUndo()}
 			>
 				<div class="flex items-center gap-3">
-					<svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<svg
+						class="h-4 w-4"
+						style="color: var(--rs-icon-muted);"
+						fill="none"
+						stroke="currentColor"
+						viewBox="0 0 24 24"
+					>
 						<path
 							stroke-linecap="round"
 							stroke-linejoin="round"
@@ -928,17 +1003,24 @@
 					</svg>
 					<span>Undo</span>
 				</div>
-				<span class="text-xs text-gray-400">Ctrl+Z</span>
+				<span class="text-xs" style="color: var(--rs-popover-muted-text);">Ctrl+Z</span>
 			</button>
 
 			<!-- Redo -->
 			<button
-				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+				style="color: var(--rs-popover-text);"
 				onclick={() => onContextAction('Redo')}
 				disabled={!sheet.canRedo()}
 			>
 				<div class="flex items-center gap-3">
-					<svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<svg
+						class="h-4 w-4"
+						style="color: var(--rs-icon-muted);"
+						fill="none"
+						stroke="currentColor"
+						viewBox="0 0 24 24"
+					>
 						<path
 							stroke-linecap="round"
 							stroke-linejoin="round"
@@ -948,19 +1030,26 @@
 					</svg>
 					<span>Redo</span>
 				</div>
-				<span class="text-xs text-gray-400">Ctrl+Y</span>
+				<span class="text-xs" style="color: var(--rs-popover-muted-text);">Ctrl+Y</span>
 			</button>
 
 			<!-- Divider -->
-			<div class="my-1 border-t border-gray-100"></div>
+			<div class="my-1" style="border-top: 1px solid var(--rs-popover-border);"></div>
 
 			<!-- Copy -->
 			<button
-				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100"
+				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors"
+				style="color: var(--rs-popover-text);"
 				onclick={() => onContextAction('Copy')}
 			>
 				<div class="flex items-center gap-3">
-					<svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<svg
+						class="h-4 w-4"
+						style="color: var(--rs-icon-muted);"
+						fill="none"
+						stroke="currentColor"
+						viewBox="0 0 24 24"
+					>
 						<path
 							stroke-linecap="round"
 							stroke-linejoin="round"
@@ -970,16 +1059,23 @@
 					</svg>
 					<span>Copy</span>
 				</div>
-				<span class="text-xs text-gray-400">Ctrl+C</span>
+				<span class="text-xs" style="color: var(--rs-popover-muted-text);">Ctrl+C</span>
 			</button>
 
 			<!-- Paste -->
 			<button
-				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100"
+				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors"
+				style="color: var(--rs-popover-text);"
 				onclick={() => onContextAction('Paste')}
 			>
 				<div class="flex items-center gap-3">
-					<svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<svg
+						class="h-4 w-4"
+						style="color: var(--rs-icon-muted);"
+						fill="none"
+						stroke="currentColor"
+						viewBox="0 0 24 24"
+					>
 						<path
 							stroke-linecap="round"
 							stroke-linejoin="round"
@@ -989,19 +1085,26 @@
 					</svg>
 					<span>Paste</span>
 				</div>
-				<span class="text-xs text-gray-400">Ctrl+V</span>
+				<span class="text-xs" style="color: var(--rs-popover-muted-text);">Ctrl+V</span>
 			</button>
 
 			<!-- Divider -->
-			<div class="my-1 border-t border-gray-100"></div>
+			<div class="my-1" style="border-top: 1px solid var(--rs-popover-border);"></div>
 
 			<!-- Delete -->
 			<button
-				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100"
+				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors"
+				style="color: var(--rs-popover-text);"
 				onclick={() => onContextAction('Delete')}
 			>
 				<div class="flex items-center gap-3">
-					<svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<svg
+						class="h-4 w-4"
+						style="color: var(--rs-icon-muted);"
+						fill="none"
+						stroke="currentColor"
+						viewBox="0 0 24 24"
+					>
 						<path
 							stroke-linecap="round"
 							stroke-linejoin="round"
@@ -1011,19 +1114,26 @@
 					</svg>
 					<span>Delete</span>
 				</div>
-				<span class="text-xs text-gray-400">Delete</span>
+				<span class="text-xs" style="color: var(--rs-popover-muted-text);">Delete</span>
 			</button>
 
 			<!-- Divider -->
-			<div class="my-1 border-t border-gray-100"></div>
+			<div class="my-1" style="border-top: 1px solid var(--rs-popover-border);"></div>
 
 			<!-- Add Rows -->
 			<button
-				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100"
+				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors"
+				style="color: var(--rs-popover-text);"
 				onclick={() => onContextAction('AddRows')}
 			>
 				<div class="flex items-center gap-3">
-					<svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<svg
+						class="h-4 w-4"
+						style="color: var(--rs-icon-muted);"
+						fill="none"
+						stroke="currentColor"
+						viewBox="0 0 24 24"
+					>
 						<path
 							stroke-linecap="round"
 							stroke-linejoin="round"
@@ -1037,11 +1147,18 @@
 
 			<!-- Add Columns -->
 			<button
-				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100"
+				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors"
+				style="color: var(--rs-popover-text);"
 				onclick={() => onContextAction('AddColumns')}
 			>
 				<div class="flex items-center gap-3">
-					<svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<svg
+						class="h-4 w-4"
+						style="color: var(--rs-icon-muted);"
+						fill="none"
+						stroke="currentColor"
+						viewBox="0 0 24 24"
+					>
 						<path
 							stroke-linecap="round"
 							stroke-linejoin="round"

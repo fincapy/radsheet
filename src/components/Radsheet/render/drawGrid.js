@@ -29,13 +29,17 @@ export function drawGrid(opts) {
 		getColWidth,
 		colLeft,
 		getRowHeight,
-		rowTop
+		rowTop,
+		theme
 	} = opts;
 
 	if (!gridCanvas) return;
 	const ctx = setupCanvas2d(gridCanvas, containerWidth, containerHeight);
 	ctx.clearRect(0, 0, containerWidth, containerHeight);
-	ctx.fillStyle = '#ffffff';
+	const t = theme;
+	const fontFamily = t?.font?.family || 'Inter, system-ui, sans-serif';
+	const cellFontSize = t?.font?.cellSizePx || 14;
+	ctx.fillStyle = t?.surface?.background || '#ffffff';
 	ctx.fillRect(0, 0, containerWidth, containerHeight);
 
 	const baseLeft = colLeft ? colLeft(startIndexCol) : startIndexCol * CELL_WIDTH;
@@ -47,7 +51,7 @@ export function drawGrid(opts) {
 	ctx.translate(offsetX, offsetY);
 
 	// grid lines
-	ctx.strokeStyle = '#e5e7eb';
+	ctx.strokeStyle = t?.grid?.lineColor || '#e5e7eb';
 	ctx.lineWidth = 1.5;
 	const viewportWidthPx = (() => {
 		if (!getColWidth) return visibleColCount * CELL_WIDTH;
@@ -71,8 +75,8 @@ export function drawGrid(opts) {
 	}
 
 	// text
-	ctx.font = '14px Inter, system-ui, sans-serif';
-	ctx.fillStyle = '#111827';
+	ctx.font = `${cellFontSize}px ${fontFamily}`;
+	ctx.fillStyle = t?.grid?.text || '#111827';
 	ctx.textBaseline = 'middle';
 	const padX = 8;
 	for (let r = startIndexRow; r < endIndexRow; r++) {
@@ -140,7 +144,7 @@ export function drawGrid(opts) {
 				ctx.rect(x0, y0, x1 - x0, y1 - y0);
 				// Inner hole: anchor cell rect
 				ctx.rect(anchorX0, anchorY0, anchorX1 - anchorX0, anchorY1 - anchorY0);
-				ctx.fillStyle = 'rgba(59,130,246,0.12)';
+				ctx.fillStyle = t?.selection?.fillGrid || 'rgba(59,130,246,0.12)';
 				// Use even-odd rule to exclude the inner rect
 				ctx.fill('evenodd');
 				ctx.restore();
@@ -148,7 +152,7 @@ export function drawGrid(opts) {
 		}
 
 		// Draw the thick border only on visible edges
-		ctx.strokeStyle = '#3b82f6';
+		ctx.strokeStyle = t?.selection?.stroke || '#3b82f6';
 		ctx.lineWidth = 1.5;
 
 		// Set line dash for dotted border when copied
@@ -390,7 +394,7 @@ export function drawGrid(opts) {
 		// Anchor cell highlight box (originally clicked cell), always outline only
 		{
 			ctx.save();
-			ctx.strokeStyle = '#3b82f6';
+			ctx.strokeStyle = t?.selection?.stroke || '#3b82f6';
 			ctx.lineWidth = 1.5;
 			ctx.setLineDash([]);
 

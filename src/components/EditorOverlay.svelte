@@ -30,7 +30,7 @@
 
 {#if editorState.open}
 	<input
-		class="editor absolute z-20 border-2 border-blue-500 bg-white px-2 text-sm outline-none"
+		class="editor absolute z-20 px-2 text-sm outline-none"
 		bind:this={inputEl}
 		style="left: {(getColLeft ? getColLeft(editorState.col) : editorState.col * CELL_WIDTH) -
 			scrollLeft -
@@ -49,5 +49,8 @@
 <style>
 	.editor {
 		box-sizing: border-box;
+		background: var(--rs-editor-bg);
+		color: var(--rs-editor-text);
+		border: 2px solid var(--rs-editor-border-focus);
 	}
 </style>
