@@ -32,7 +32,8 @@ export function drawHeaders(opts) {
 		getHoverResizeRow,
 		theme,
 		isFiltered,
-		activeFilters
+		activeFilters,
+		openFilterCol
 	} = opts;
 
 	// Column headers
@@ -81,7 +82,9 @@ export function drawHeaders(opts) {
 			if (isFiltered) {
 				const iconX = x + w - 20;
 				const iconY = COLUMN_HEADER_HEIGHT / 2 - 6;
-				drawFilterIcon(ctx, iconX, iconY, theme, activeFilters.has(c));
+				const isActive = activeFilters.has(c);
+				const isOpen = openFilterCol === c;
+				drawFilterIcon(ctx, iconX, iconY, theme, isActive, isOpen);
 			}
 
 			// Highlight for column resize
@@ -228,7 +231,7 @@ export function drawHeaders(opts) {
 	}
 }
 
-function drawFilterIcon(ctx, x, y, theme, isActive) {
+function drawFilterIcon(ctx, x, y, theme, isActive, isOpen) {
 	ctx.save();
 	// Draw a clean funnel icon
 	const funnelTop = { x1: x + 1.5, y1: y + 2.5, x2: x + 10.5, y2: y + 2.5 };
@@ -253,6 +256,17 @@ function drawFilterIcon(ctx, x, y, theme, isActive) {
 		ctx.arc(x + 10.5, y + 2.5, 2, 0, Math.PI * 2);
 		ctx.fillStyle = theme.selection.stroke;
 		ctx.fill();
+	}
+	// Open outline to indicate the popover is currently open for this column
+	if (isOpen) {
+		ctx.save();
+		ctx.strokeStyle = theme.selection.stroke;
+		ctx.globalAlpha = 0.8;
+		ctx.lineWidth = 1;
+		ctx.beginPath();
+		ctx.roundRect(x - 3, y - 2, 18, 14, 3);
+		ctx.stroke();
+		ctx.restore();
 	}
 	ctx.restore();
 }

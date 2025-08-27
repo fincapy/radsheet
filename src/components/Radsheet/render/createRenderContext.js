@@ -56,7 +56,8 @@ export function createRenderContext(env) {
 				getHoverResizeRow: env.getHoverResizeRow,
 				theme: env.theme ? env.theme() : undefined,
 				isFiltered: env.isFiltered ? env.isFiltered() : false,
-				activeFilters: env.getActiveFilters ? env.getActiveFilters() : new Set()
+				activeFilters: env.getActiveFilters ? env.getActiveFilters() : new Set(),
+				openFilterCol: env.getOpenFilterCol ? env.getOpenFilterCol() : null
 			};
 		}
 	};

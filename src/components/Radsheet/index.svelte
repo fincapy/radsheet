@@ -218,6 +218,11 @@
 		if (drag && typeof drag.endSelection === 'function') {
 			drag.endSelection();
 		}
+		// Also select the entire column when opening the filter popover
+		if (selection && typeof selection.setRange === 'function') {
+			const lastRow = Math.max(0, getNumRows() - 1);
+			selection.setRange(0, col, lastRow, col);
+		}
 		filterColumn = col;
 		filterMode = 'values';
 		filterQuery = '';
@@ -1018,7 +1023,8 @@
 			getHoverResizeRow: () => hoverResizeRow,
 			theme: () => resolvedTheme,
 			isFiltered: () => filteringEnabled,
-			getActiveFilters: () => activeFilterCols
+			getActiveFilters: () => activeFilterCols,
+			getOpenFilterCol: () => (filterOpen ? filterColumn : null)
 		});
 
 		// Ensure first paint happens after render context is ready

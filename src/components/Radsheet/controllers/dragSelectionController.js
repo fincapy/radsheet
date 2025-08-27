@@ -199,8 +199,25 @@ export function createDragSelectionController({ getters, setters, methods, refs,
 		if (!getters.getSelecting() && !resizing.active) {
 			const hit = methods.getColEdgeNearX ? methods.getColEdgeNearX(x, 5) : null;
 			methods.setHoverResizeCol(hit);
+			// Determine if hovering over filter icon area for the current column
+			let cursor = 'default';
+			if (hit != null) {
+				cursor = 'col-resize';
+			} else if (methods.getColLeft && getters.getScrollLeft != null) {
+				const col = methods.xToColInHeader(x);
+				const rightAbs = methods.getColLeft(col + 1);
+				const rightLocal = rightAbs - getters.getScrollLeft();
+				if (
+					x >= rightLocal - 24 &&
+					x <= rightLocal - 4 &&
+					methods.isFilteringEnabled &&
+					methods.isFilteringEnabled()
+				) {
+					cursor = 'pointer';
+				}
+			}
 			if (canvasMove && canvasMove.style) {
-				canvasMove.style.cursor = hit != null ? 'col-resize' : 'default';
+				canvasMove.style.cursor = cursor;
 			}
 		}
 		if (resizing.active) {
