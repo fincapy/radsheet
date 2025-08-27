@@ -1,4 +1,6 @@
 <script>
+	import CustomSelect from './CustomSelect.svelte';
+
 	let {
 		values,
 		onApply,
@@ -17,6 +19,15 @@
 	let activeTab = $state('values'); // 'values' | 'condition'
 	let conditionOp = $state('contains');
 	let conditionTerm = $state('');
+
+	const conditionOptions = [
+		{ value: 'contains', label: 'Text contains' },
+		{ value: 'equals', label: 'Text equals' },
+		{ value: 'startsWith', label: 'Text starts with' },
+		{ value: 'endsWith', label: 'Text ends with' },
+		{ value: 'isBlank', label: 'Is blank' },
+		{ value: 'isNotBlank', label: 'Is not blank' }
+	];
 
 	$effect(() => {
 		if (initialCondition && initialCondition.op) {
@@ -158,25 +169,18 @@
 	{#if activeTab === 'condition'}
 		<div class="p-3 text-sm">
 			<label class="mb-1 block text-xs" style="color: var(--rs-popover-muted-text);">
-				Condition
-				<select
+				<CustomSelect
 					bind:value={conditionOp}
-					class="mt-1 mb-2 w-full cursor-pointer rounded border px-2 py-1 text-sm"
-					style="background: var(--rs-editor-bg); color: var(--rs-editor-text); border-color: var(--rs-popover-border);"
-				>
-					<option value="contains">Text contains</option>
-					<option value="equals">Text equals</option>
-					<option value="startsWith">Text starts with</option>
-					<option value="endsWith">Text ends with</option>
-					<option value="isBlank">Is blank</option>
-					<option value="isNotBlank">Is not blank</option>
-				</select>
+					options={conditionOptions}
+					placeholder="Select condition..."
+					class="mt-1 mb-2 w-full"
+				/>
 			</label>
 			{#if conditionOp !== 'isBlank' && conditionOp !== 'isNotBlank'}
 				<input
 					type="text"
 					bind:value={conditionTerm}
-					class="w-full rounded border px-2 py-1 text-sm"
+					class="condition-value-input w-full rounded border px-2 py-1 text-sm"
 					placeholder="Value"
 					style="background: var(--rs-editor-bg); color: var(--rs-editor-text); border-color: var(--rs-popover-border);"
 				/>
@@ -196,3 +200,11 @@
 		</div>
 	{/if}
 </div>
+
+<style>
+	.condition-value-input:focus {
+		border-color: var(--rs-editor-border-focus);
+		box-shadow: 0 0 0 2px var(--rs-editor-border-focus);
+		outline: none;
+	}
+</style>
