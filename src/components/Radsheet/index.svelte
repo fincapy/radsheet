@@ -96,6 +96,14 @@
 	let activeFilterCols = $state(new Set());
 	let filterSpecByCol = $state(new Map()); // col -> Set(values)
 	let filteringEnabled = $state(false);
+	let filterGathering = $state(false);
+	let filterLoadedCount = $state(0);
+	let _filterCancelToken = null;
+	let hasMoreFilterValues = $state(false);
+	let filterScan = null; // internal scan state object
+	let filterMode = $state('values'); // 'values' | 'condition'
+	let filterQuery = $state('');
+	let filterConditionByCol = $state(new Map()); // col -> {op, term}
 	const addColumns = () => {
 		executeWithRerender(() => {
 			sheet.addColumns(26);
@@ -206,39 +214,153 @@
 
 	// Filtering helpers
 	function openFilterForColumn(col) {
-		filterColumn = col;
-		// collect unique values from the underlying sheet for the column (not filtered)
-		const valuesSet = new Set();
-		for (let r = 0; r < sheet.numRows; r++) {
-			valuesSet.add(sheet.getValue(r, col));
+		// Ensure any active selection/auto-scroll is cancelled before opening popover
+		if (drag && typeof drag.endSelection === 'function') {
+			drag.endSelection();
 		}
-		const existing = filterSpecByCol.get(col);
-		filterValues = Array.from(valuesSet).map((v) => ({
-			value: v,
-			checked: !existing || existing.has(v)
-		}));
-		filterOpen = true;
+		filterColumn = col;
+		filterMode = 'values';
+		filterQuery = '';
+		startFilterScan(col, '');
+		// hydrate existing condition UI if present
+		const existingCond = filterConditionByCol.get(col);
+		if (existingCond && typeof window !== 'undefined') {
+			// store to a global so popover can read initial state via props in future if needed
+			window.__rsExistingCondition = existingCond;
+		}
 	}
 
-	function applyFiltersFromPopover(values) {
+	function startFilterScan(col, query) {
+		if (_filterCancelToken && _filterCancelToken.cancel) _filterCancelToken.cancel();
+		const cancelToken = {
+			cancelled: false,
+			cancel() {
+				this.cancelled = true;
+			}
+		};
+		_filterCancelToken = cancelToken;
+		const valuesSet = new Set();
+		const existing = filterSpecByCol.get(col);
+		filterValues = [];
+		filterLoadedCount = 0;
+		filterGathering = true;
+		filterOpen = true;
+		hasMoreFilterValues = true;
+
+		const CAP = 1000;
+		const frameBudgetMs = 6;
+		const uiUpdateIntervalMs = 100;
+		let rowIndex = 0;
+		let pendingAdditions = [];
+		let lastUiUpdate = 0;
+		let desiredCount = CAP;
+		const matchesQuery = (v) => {
+			if (!query) return true;
+			return String(v ?? '')
+				.toLowerCase()
+				.includes(query.toLowerCase());
+		};
+		function flushPending() {
+			if (pendingAdditions.length === 0) return;
+			filterValues = filterValues.concat(pendingAdditions);
+			pendingAdditions = [];
+			lastUiUpdate = typeof performance !== 'undefined' ? performance.now() : Date.now();
+		}
+
+		function step() {
+			if (cancelToken.cancelled) return;
+			const start = typeof performance !== 'undefined' ? performance.now() : Date.now();
+			while (rowIndex < sheet.numRows) {
+				const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+				if (now - start >= frameBudgetMs) break;
+				const v = sheet.getValue(rowIndex, col);
+				if (matchesQuery(v) && !valuesSet.has(v)) {
+					valuesSet.add(v);
+					pendingAdditions.push({ value: v, checked: !existing || existing.has(v) });
+					if (pendingAdditions.length >= 200) flushPending();
+				}
+				rowIndex++;
+				if (valuesSet.size >= desiredCount) break;
+			}
+			filterLoadedCount = rowIndex;
+			const now2 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+			if (now2 - lastUiUpdate >= uiUpdateIntervalMs) flushPending();
+			if (rowIndex < sheet.numRows && valuesSet.size < desiredCount) {
+				requestAnimationFrame(step);
+			} else {
+				flushPending();
+				// pause scanning; resume only on explicit Load more or new search
+				filterGathering = false;
+				hasMoreFilterValues = rowIndex < sheet.numRows;
+			}
+		}
+		requestAnimationFrame(step);
+
+		filterScan = {
+			col,
+			query,
+			cancelToken,
+			get rowIndex() {
+				return rowIndex;
+			},
+			set rowIndex(v) {
+				rowIndex = v;
+			},
+			get desiredCount() {
+				return desiredCount;
+			},
+			set desiredCount(v) {
+				desiredCount = v;
+			},
+			step
+		};
+	}
+
+	function onFilterSearch(query) {
+		filterQuery = query || '';
+		startFilterScan(filterColumn, filterQuery);
+	}
+
+	function onLoadMoreValues() {
+		if (!filterScan) return;
+		filterScan.desiredCount = filterScan.desiredCount + 1000;
+		requestAnimationFrame(filterScan.step);
+	}
+
+	function closeFilterPopover() {
+		if (_filterCancelToken && _filterCancelToken.cancel) _filterCancelToken.cancel();
+		filterOpen = false;
+		filterGathering = false;
+	}
+
+	function applyFiltersFromPopover(payload) {
 		if (filterColumn == null) return;
-		const selected = new Set(values.filter((x) => x.checked).map((x) => x.value));
-		if (selected.size === values.length) {
-			// all selected => clear filter for this col
-			filterSpecByCol.delete(filterColumn);
-			activeFilterCols.delete(filterColumn);
-		} else if (selected.size === 0) {
-			// none selected => show none
-			filterSpecByCol.set(filterColumn, new Set());
+		if (payload && payload.condition) {
+			// condition-based filter
+			filterConditionByCol.set(filterColumn, payload.condition);
 			activeFilterCols.add(filterColumn);
 		} else {
-			filterSpecByCol.set(filterColumn, selected);
-			activeFilterCols.add(filterColumn);
+			const selected = new Set(payload.filter((x) => x.checked).map((x) => x.value));
+			if (selected.size === payload.length) {
+				filterSpecByCol.delete(filterColumn);
+				if (!filterConditionByCol.has(filterColumn)) activeFilterCols.delete(filterColumn);
+			} else if (selected.size === 0) {
+				filterSpecByCol.set(filterColumn, new Set());
+				activeFilterCols.add(filterColumn);
+			} else {
+				filterSpecByCol.set(filterColumn, selected);
+				activeFilterCols.add(filterColumn);
+			}
 		}
-		const filters = Array.from(filterSpecByCol.entries()).map(([col, set]) => ({
-			col,
-			values: Array.from(set)
-		}));
+
+		// Build combined filter list for SheetView
+		const filters = [];
+		for (const [col, set] of filterSpecByCol.entries()) {
+			filters.push({ col, values: Array.from(set) });
+		}
+		for (const [col, cond] of filterConditionByCol.entries()) {
+			filters.push({ col, condition: cond });
+		}
 		sheetView.setFilters(filters);
 		filterVersion++;
 		filterOpen = false;
@@ -248,6 +370,7 @@
 	function clearFilterForColumn() {
 		if (filterColumn == null) return;
 		filterSpecByCol.delete(filterColumn);
+		filterConditionByCol.delete(filterColumn);
 		activeFilterCols.delete(filterColumn);
 		sheetView.setFilters([]);
 		filterVersion++;
@@ -915,13 +1038,34 @@
 
 <svelte:window
 	onkeydown={(e) => {
+		// If focus is inside an input/select/textarea or inside the filter popover, don't route to grid keymap
+		const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
+		const isFormEl =
+			tag === 'input' ||
+			tag === 'textarea' ||
+			tag === 'select' ||
+			(e.target && e.target.isContentEditable);
+		const inFilter =
+			filterOpen && e.target && e.target.closest && e.target.closest('[data-rs-filter-popover]');
+		if (isFormEl || inFilter) return;
 		if (ctxOpen && e.key === 'Escape') {
 			closeContextMenu();
 			return;
 		}
 		onKeyDown(e);
 	}}
-	onpaste={onPaste}
+	onpaste={(e) => {
+		const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
+		const isFormEl =
+			tag === 'input' ||
+			tag === 'textarea' ||
+			tag === 'select' ||
+			(e.target && e.target.isContentEditable);
+		const inFilter =
+			filterOpen && e.target && e.target.closest && e.target.closest('[data-rs-filter-popover]');
+		if (isFormEl || inFilter) return;
+		onPaste(e);
+	}}
 	onclick={() => {
 		if (ctxOpen) closeContextMenu();
 	}}
@@ -1037,7 +1181,14 @@
 				values={filterValues}
 				onApply={applyFiltersFromPopover}
 				onClear={clearFilterForColumn}
-				onClose={() => (filterOpen = false)}
+				onClose={closeFilterPopover}
+				loading={filterGathering}
+				loadedCount={filterLoadedCount}
+				totalCount={sheet.numRows}
+				hasMore={hasMoreFilterValues}
+				onLoadMore={onLoadMoreValues}
+				onSearch={onFilterSearch}
+				initialCondition={filterConditionByCol.get(filterColumn)}
 			/>
 		{/if}
 	</div>

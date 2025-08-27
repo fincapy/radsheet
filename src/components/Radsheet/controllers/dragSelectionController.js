@@ -191,6 +191,7 @@ export function createDragSelectionController({ getters, setters, methods, refs,
 		beginSelection('col', 0, col, e);
 	}
 	function onColHeadPointerMove(e) {
+		if (e && e.target && e.target.closest && e.target.closest('[data-rs-filter-popover]')) return;
 		const canvasMove = refs.getColHeadCanvas();
 		const { x } = methods.localXY(canvasMove, e);
 		lastPointer = { x, y: 0 };
@@ -221,7 +222,11 @@ export function createDragSelectionController({ getters, setters, methods, refs,
 	}
 	function onColHeadPointerUp(e) {
 		const canvas = refs.getColHeadCanvas();
-		canvas.releasePointerCapture(e.pointerId);
+		// Always release pointer capture; event may end over popover
+		try {
+			canvas.releasePointerCapture(e.pointerId);
+		} catch {}
+		if (e && e.target && e.target.closest && e.target.closest('[data-rs-filter-popover]')) return;
 		if (resizing.active) {
 			resizing = { active: false, colIndex: -1, startX: 0, startWidth: 0 };
 			methods.setHoverResizeCol(null);

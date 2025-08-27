@@ -29,7 +29,7 @@ export class SheetView {
 	}
 
 	setFilters(filters) {
-		this.filters = filters;
+		this.filters = filters || [];
 		this._rebuildFilter();
 		this.version++;
 	}
@@ -84,7 +84,7 @@ export class SheetView {
 	}
 
 	_rebuildFilter() {
-		if (this.filters.length === 0) {
+		if (!this.filters || this.filters.length === 0) {
 			this.rowMask = null;
 			this.fenwickTree = null;
 			this.visibleCount = this.sheet.numRows;
@@ -94,16 +94,39 @@ export class SheetView {
 		this.rowMask = new Array(this.sheet.numRows).fill(true);
 		this.fenwickTree = new FenwickTree(this.sheet.numRows);
 
-		const filterMaps = this.filters.map((f) => ({
-			col: f.col,
-			values: new Set(f.values)
-		}));
+		// Normalize filters to evaluators per column
+		/** @type {{ col:number, evaluator: (v:any)=>boolean }[]} */
+		const compiled = [];
+		for (const f of this.filters) {
+			if (!f) continue;
+			const col = f.col;
+			if (Array.isArray(f.values)) {
+				const set = new Set(f.values);
+				compiled.push({ col, evaluator: (v) => set.has(v) });
+			} else if (f.condition && f.condition.op) {
+				const op = String(f.condition.op);
+				const termRaw = f.condition.term == null ? '' : String(f.condition.term);
+				const term = termRaw.toLowerCase();
+				const evalCond = (v) => {
+					if (op === 'isBlank') return v == null || v === '';
+					if (op === 'isNotBlank') return !(v == null || v === '');
+					const s = String(v ?? '').toLowerCase();
+					if (op === 'contains') return s.includes(term);
+					if (op === 'equals') return s === term;
+					if (op === 'startsWith') return s.startsWith(term);
+					if (op === 'endsWith') return s.endsWith(term);
+					return true;
+				};
+				compiled.push({ col, evaluator: evalCond });
+			}
+		}
 
 		for (let r = 0; r < this.sheet.numRows; r++) {
 			let isVisible = true;
-			for (const filter of filterMaps) {
-				const cellValue = this.sheet.getValue(r, filter.col);
-				if (!filter.values.has(cellValue)) {
+			for (let i = 0; i < compiled.length; i++) {
+				const spec = compiled[i];
+				const cellValue = this.sheet.getValue(r, spec.col);
+				if (!spec.evaluator(cellValue)) {
 					isVisible = false;
 					break;
 				}

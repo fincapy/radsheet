@@ -23,6 +23,9 @@ export function createViewportController({ getters, setters }) {
 	let __wheelAccumulatedDeltaY = 0;
 	let __wheelRafScheduled = false;
 	function onWheel(e) {
+		// Ignore wheel events originating from popovers or inputs
+		const target = e.target;
+		if (target && target.closest && target.closest('[data-rs-filter-popover]')) return;
 		e.preventDefault();
 		__wheelAccumulatedDeltaY += e.deltaY;
 		__wheelAccumulatedDeltaX += e.deltaX;
