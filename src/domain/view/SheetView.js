@@ -26,6 +26,12 @@ export class SheetView {
 
 		this.visibleCount = sheet.numRows;
 		this.version = 0;
+
+		/** @type {boolean} */
+		this.zeroMatch = false;
+
+		/** @type {number} */
+		this.lastDataRow = 0; // legacy global; may be superseded by per-column logic
 	}
 
 	setFilters(filters) {
@@ -53,9 +59,21 @@ export class SheetView {
 		if (!this.rowMask || !this.fenwickTree) {
 			return visualIndex;
 		}
+		if (this.zeroMatch) return visualIndex;
+		return this.fenwickTree.findKth(visualIndex + 1);
+	}
 
-		// Use Fenwick tree to find the k-th visible row in O(log n) time.
-		// visualIndex is 0-based, findKth expects a 1-based rank.
+	/**
+	 * Row mapping for write operations. If filtering hides all rows, allow writing
+	 * directly to the unfiltered row index corresponding to the visual index.
+	 * @param {number} visualIndex
+	 * @returns {number}
+	 */
+	rowIdAtForWrite(visualIndex) {
+		if (this.zeroMatch) return visualIndex;
+		if (!this.rowMask || !this.fenwickTree) {
+			return visualIndex;
+		}
 		return this.fenwickTree.findKth(visualIndex + 1);
 	}
 
@@ -66,7 +84,11 @@ export class SheetView {
 	 * @returns {import('../sheet/sheet.js').CellValue}
 	 */
 	getValue(visualRow, col) {
-		const r = this.rowIdAt(visualRow);
+		if (this.zeroMatch) return null;
+		if (!this.rowMask || !this.fenwickTree) {
+			return this.sheet.getValue(visualRow, col);
+		}
+		const r = this.fenwickTree.findKth(visualRow + 1);
 		if (r === -1) return null;
 		return this.sheet.getValue(r, col);
 	}
@@ -78,7 +100,7 @@ export class SheetView {
 	 * @param {import('../sheet/sheet.js').CellValue} v
 	 */
 	setValue(visualRow, col, v) {
-		const r = this.rowIdAt(visualRow);
+		const r = this.rowIdAtForWrite(visualRow);
 		if (r === -1) return;
 		this.sheet.setValue(r, col, v);
 	}
@@ -94,22 +116,72 @@ export class SheetView {
 		this.rowMask = new Array(this.sheet.numRows).fill(true);
 		this.fenwickTree = new FenwickTree(this.sheet.numRows);
 
+		// Build per-column last active row, with adjacency fallback
+		/** @type {Map<number, number>} */
+		const lastRowByCol = new Map();
+		const getLastRowForCol = (col) => {
+			if (lastRowByCol.has(col)) return lastRowByCol.get(col);
+			let last = -1;
+			for (let r = this.sheet.numRows - 1; r >= 0; r--) {
+				if (this.sheet.hasValue(r, col)) {
+					last = r;
+					break;
+				}
+			}
+			// If column has no values, fallback to immediate adjacent columns
+			if (last === -1) {
+				let left = -1;
+				if (col - 1 >= 0) {
+					for (let r = this.sheet.numRows - 1; r >= 0; r--) {
+						if (this.sheet.hasValue(r, col - 1)) {
+							left = r;
+							break;
+						}
+					}
+				}
+				let right = -1;
+				if (col + 1 < this.sheet.numCols) {
+					for (let r = this.sheet.numRows - 1; r >= 0; r--) {
+						if (this.sheet.hasValue(r, col + 1)) {
+							right = r;
+							break;
+						}
+					}
+				}
+				last = Math.max(left, right);
+			}
+			lastRowByCol.set(col, last);
+			return last;
+		};
+
 		// Normalize filters to evaluators per column
-		/** @type {{ col:number, evaluator: (v:any)=>boolean }[]} */
+		/** @type {{ col:number, evaluator: (v:any, row:number)=>boolean }[]} */
 		const compiled = [];
 		for (const f of this.filters) {
 			if (!f) continue;
 			const col = f.col;
 			if (Array.isArray(f.values)) {
 				const set = new Set(f.values);
-				compiled.push({ col, evaluator: (v) => set.has(v) });
+				compiled.push({
+					col,
+					evaluator: (v, row) => {
+						const activeLast = getLastRowForCol(col);
+						if ((v == null || v === '') && activeLast !== -1 && row > activeLast) return true;
+						return set.has(v);
+					}
+				});
 			} else if (f.condition && f.condition.op) {
 				const op = String(f.condition.op);
 				const termRaw = f.condition.term == null ? '' : String(f.condition.term);
 				const term = termRaw.toLowerCase();
-				const evalCond = (v) => {
-					if (op === 'isBlank') return v == null || v === '';
-					if (op === 'isNotBlank') return !(v == null || v === '');
+				const evalCond = (v, row) => {
+					const activeLast = getLastRowForCol(col);
+					if (op === 'isBlank')
+						return v == null || v === '' || (activeLast !== -1 && row > activeLast);
+					if (op === 'isNotBlank') {
+						if (activeLast !== -1 && row > activeLast && (v == null || v === '')) return true;
+						return !(v == null || v === '');
+					}
 					const s = String(v ?? '').toLowerCase();
 					if (op === 'contains') return s.includes(term);
 					if (op === 'equals') return s === term;
@@ -126,7 +198,7 @@ export class SheetView {
 			for (let i = 0; i < compiled.length; i++) {
 				const spec = compiled[i];
 				const cellValue = this.sheet.getValue(r, spec.col);
-				if (!spec.evaluator(cellValue)) {
+				if (!spec.evaluator(cellValue, r)) {
 					isVisible = false;
 					break;
 				}
@@ -142,6 +214,15 @@ export class SheetView {
 			}
 		}
 
+		if (visibleCount === 0) {
+			this.zeroMatch = true;
+			this.rowMask = null;
+			this.fenwickTree = null;
+			this.visibleCount = this.sheet.numRows;
+			return;
+		}
+
+		this.zeroMatch = false;
 		this.visibleCount = visibleCount;
 	}
 

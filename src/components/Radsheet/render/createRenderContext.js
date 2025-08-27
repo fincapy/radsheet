@@ -57,7 +57,8 @@ export function createRenderContext(env) {
 				theme: env.theme ? env.theme() : undefined,
 				isFiltered: env.isFiltered ? env.isFiltered() : false,
 				activeFilters: env.getActiveFilters ? env.getActiveFilters() : new Set(),
-				openFilterCol: env.getOpenFilterCol ? env.getOpenFilterCol() : null
+				openFilterCol: env.getOpenFilterCol ? env.getOpenFilterCol() : null,
+				mapVisualRowToSheetRow: env.mapVisualRowToSheetRow
 			};
 		}
 	};

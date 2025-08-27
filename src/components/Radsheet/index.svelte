@@ -1038,7 +1038,8 @@
 			theme: () => resolvedTheme,
 			isFiltered: () => filteringEnabled,
 			getActiveFilters: () => activeFilterCols,
-			getOpenFilterCol: () => (filterOpen ? filterColumn : null)
+			getOpenFilterCol: () => (filterOpen ? filterColumn : null),
+			mapVisualRowToSheetRow: (vr) => sheetView.rowIdAt(vr)
 		});
 
 		// Ensure first paint happens after render context is ready

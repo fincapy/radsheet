@@ -63,6 +63,24 @@
 
 	const allChecked = $derived(values.length > 0 && values.every((v) => v.checked));
 	const isIndeterminate = $derived(!allChecked && values.some((v) => v.checked));
+
+	// Ensure blanks (null) appear first if present
+	const displayValues = $derived(
+		(() => {
+			if (!values || values.length === 0) return values;
+			let blanks = null;
+			const others = [];
+			for (const item of values) {
+				if (item && item.value == null) {
+					// Keep reference equality to preserve bindings
+					if (!blanks) blanks = item;
+				} else {
+					others.push(item);
+				}
+			}
+			return blanks ? [blanks, ...others] : values;
+		})()
+	);
 </script>
 
 <svelte:window
@@ -121,7 +139,7 @@
 			onwheel={(e) => e.stopPropagation()}
 			style="scrollbar-color: var(--rs-scrollbar-thumb) var(--rs-scrollbar-track); scrollbar-width: thin; overscroll-behavior: none;"
 		>
-			<label class="flex w-full items-center px-3 py-2 text-sm font-medium">
+			<label class="flex w-full items-center px-3 pt-1.5 text-sm">
 				<input
 					type="checkbox"
 					class="mr-2 accent-rose-500"
@@ -132,7 +150,7 @@
 				(Select All)
 			</label>
 
-			{#each values as item}
+			{#each displayValues as item}
 				<label class="flex w-full items-center px-3 py-1.5 text-sm">
 					<input type="checkbox" class="mr-2 accent-rose-500" bind:checked={item.checked} />
 					<span class="truncate">{item.value === null ? '(Blanks)' : item.value}</span>

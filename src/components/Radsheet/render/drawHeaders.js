@@ -33,7 +33,8 @@ export function drawHeaders(opts) {
 		theme,
 		isFiltered,
 		activeFilters,
-		openFilterCol
+		openFilterCol,
+		mapVisualRowToSheetRow
 	} = opts;
 
 	// Column headers
@@ -178,8 +179,10 @@ export function drawHeaders(opts) {
 		for (let r = startIndexRow; r < endIndexRow; r++) {
 			const baseY = rowTop ? rowTop(startIndexRow) : startIndexRow * CELL_HEIGHT;
 			const y = (rowTop ? rowTop(r) : r * CELL_HEIGHT) - baseY;
+			const sheetRowIndex =
+				typeof mapVisualRowToSheetRow === 'function' ? mapVisualRowToSheetRow(r) : r;
 			ctx.fillText(
-				String(r + 1),
+				String((sheetRowIndex != null ? sheetRowIndex : r) + 1),
 				ROW_HEADER_WIDTH / 2,
 				y + (getRowHeight ? getRowHeight(r) : CELL_HEIGHT) / 2
 			);
