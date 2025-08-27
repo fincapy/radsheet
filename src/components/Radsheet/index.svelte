@@ -55,6 +55,7 @@
 			--rs-popover-text: ${t.popover.text};
 			--rs-popover-muted-text: ${t.popover.mutedText};
 			--rs-popover-hover-bg: ${t.popover.hoverBackground};
+			--rs-popover-apply-button: ${t.popover.applyButton};
 			--rs-icon-muted: ${t.icon.muted};
 			--rs-editor-bg: ${t.editor.background};
 			--rs-editor-text: ${t.editor.text};
@@ -85,9 +86,9 @@
 	};
 
 	// Domain model (source of truth for cell values)
-	let sheet = $state.raw(new Sheet());
+	const sheet = new Sheet();
 	// View model for filtering/sorting without mutating sheet
-	let sheetView = $state.raw(new SheetView(sheet));
+	const sheetView = new SheetView(sheet);
 	let filterVersion = $state(0);
 	// Filter UI state
 	let filterOpen = $state(false);
@@ -382,6 +383,17 @@
 		filterOpen = false;
 		scheduleRender();
 	}
+
+	function clearAllFilters() {
+		filterSpecByCol.clear();
+		filterConditionByCol.clear();
+		activeFilterCols.clear();
+		sheetView.setFilters([]);
+		filterVersion++;
+		filterOpen = false;
+		filteringEnabled = false;
+		scheduleRender();
+	}
 	function onContextAction(type) {
 		closeContextMenu();
 		if (type === 'Undo') {
@@ -411,6 +423,8 @@
 			// Enable filtering UI globally; do not open popover immediately
 			filteringEnabled = true;
 			scheduleRender();
+		} else if (type === 'RemoveFilter') {
+			clearAllFilters();
 		}
 	}
 
@@ -1342,6 +1356,33 @@
 					<span>Apply Filter…</span>
 				</div>
 			</button>
+
+			<!-- Remove Filter -->
+			{#if filteringEnabled}
+				<button
+					class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors"
+					style="color: var(--rs-popover-text);"
+					onclick={() => onContextAction('RemoveFilter')}
+				>
+					<div class="flex items-center gap-3">
+						<svg
+							class="h-4 w-4"
+							style="color: var(--rs-icon-muted);"
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M6 18L18 6M6 6l12 12"
+							/>
+						</svg>
+						<span>Remove Filter</span>
+					</div>
+				</button>
+			{/if}
 
 			{#if editable}
 				<!-- Paste -->

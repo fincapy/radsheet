@@ -110,16 +110,10 @@
 			onwheel={(e) => e.stopPropagation()}
 			style="scrollbar-color: var(--rs-scrollbar-thumb) var(--rs-scrollbar-track); scrollbar-width: thin; overscroll-behavior: none;"
 		>
-			{#if loading}
-				<div class="px-3 py-2 text-xs" style="color: var(--rs-popover-muted-text);">
-					Loading… {loadedCount}/{totalCount}
-				</div>
-			{/if}
-
 			<label class="flex w-full items-center px-3 py-2 text-sm font-medium">
 				<input
 					type="checkbox"
-					class="mr-2"
+					class="mr-2 accent-rose-500"
 					checked={allChecked}
 					indeterminate={isIndeterminate}
 					onchange={handleToggleAll}
@@ -129,7 +123,7 @@
 
 			{#each values as item}
 				<label class="flex w-full items-center px-3 py-1.5 text-sm">
-					<input type="checkbox" class="mr-2" bind:checked={item.checked} />
+					<input type="checkbox" class="mr-2 accent-rose-500" bind:checked={item.checked} />
 					<span class="truncate">{item.value === null ? '(Blanks)' : item.value}</span>
 				</label>
 			{/each}
@@ -156,7 +150,7 @@
 			<button
 				onclick={() => onApply(values)}
 				class="ml-2 cursor-pointer rounded px-3 py-1 text-sm text-white"
-				style="background: var(--rs-selection-stroke);">Apply</button
+				style="background: var(--rs-popover-apply-button);">Apply</button
 			>
 		</div>
 	{/if}
@@ -167,7 +161,7 @@
 				Condition
 				<select
 					bind:value={conditionOp}
-					class="mt-1 mb-2 w-full rounded border px-2 py-1 text-sm"
+					class="mt-1 mb-2 w-full cursor-pointer rounded border px-2 py-1 text-sm"
 					style="background: var(--rs-editor-bg); color: var(--rs-editor-text); border-color: var(--rs-popover-border);"
 				>
 					<option value="contains">Text contains</option>
@@ -191,13 +185,13 @@
 		<div class="flex justify-end border-t p-2" style="border-color: var(--rs-popover-border);">
 			<button
 				onclick={onClear}
-				class="rounded px-3 py-1 text-sm"
+				class="cursor-pointer rounded px-3 py-1 text-sm"
 				style="color: var(--rs-popover-muted-text);">Clear</button
 			>
 			<button
 				onclick={() => onApply({ condition: { op: conditionOp, term: conditionTerm } })}
-				class="ml-2 rounded px-3 py-1 text-sm text-white"
-				style="background: var(--rs-selection-stroke);">Apply</button
+				class="ml-2 cursor-pointer rounded px-3 py-1 text-sm text-white"
+				style="background: var(--rs-popover-apply-button);">Apply</button
 			>
 		</div>
 	{/if}

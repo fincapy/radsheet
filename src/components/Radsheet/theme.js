@@ -86,6 +86,7 @@ const dark = {
 		hoverResizeGlow: 'rgba(251,113,133,0.25)', // rose-400 with opacity
 		hoverResizeLine: '#fb7185' // rose-400
 	},
+
 	border: {
 		color: '#52525b' // zinc-600
 	},
@@ -97,7 +98,8 @@ const dark = {
 		border: '#52525b', // zinc-600
 		text: '#e4e4e7', // zinc-200
 		mutedText: '#a1a1aa', // zinc-400
-		hoverBackground: '#27272a' // zinc-800
+		hoverBackground: '#27272a', // zinc-800
+		applyButton: '#f43f5e' // rose-500
 	},
 	scrollbar: {
 		track: '#27272a', // zinc-800
