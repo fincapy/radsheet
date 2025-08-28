@@ -147,7 +147,9 @@ export function setupControllers({
 			setRowHeight: methods.setRowHeight,
 			getRowTop: methods.getRowTop,
 			openFilterForColumn: methods.openFilterForColumn,
-			isFilteringEnabled: methods.isFilteringEnabled
+			isFilteringEnabled: methods.isFilteringEnabled,
+			toggleSortForColumn: methods.toggleSortForColumn,
+			isSortingEnabled: methods.isSortingEnabled
 		},
 		refs,
 		constants

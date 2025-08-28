@@ -65,6 +65,20 @@ export function createCommandBus({ getters, setters, controllers, methods }) {
 				if (methods && methods.redo) methods.redo();
 				break;
 
+			// Sorting / Filtering Commands
+			case 'ApplySort':
+				if (methods && methods.enableSortingUi) methods.enableSortingUi();
+				break;
+			case 'RemoveSort':
+				if (methods && methods.clearSort) methods.clearSort();
+				break;
+			case 'ApplyFilter':
+				if (methods && methods.enableFilteringUi) methods.enableFilteringUi();
+				break;
+			case 'RemoveFilter':
+				if (methods && methods.clearAllFilters) methods.clearAllFilters();
+				break;
+
 			default:
 				console.warn('Unknown command type:', type);
 		}

@@ -18,6 +18,9 @@ export class SheetView {
 		this.filters = []; // Array<FilterSpec>
 		this.sortSpec = null; // { cols: [{c, dir:'asc'|'desc'}], stable: true }
 
+		/** @type {number[] | null} */
+		this.sortedRows = null; // Array of sheet row indices in visual order (after filter + sort)
+
 		/** @type {boolean[] | null} */
 		this.rowMask = null; // A boolean array or bitset. True if the row is visible.
 
@@ -34,6 +37,60 @@ export class SheetView {
 		this.lastDataRow = 0; // legacy global; may be superseded by per-column logic
 	}
 
+	/**
+	 * Returns the last row index with data for a column, using immediate adjacency fallback
+	 * to the left or right if the column itself has no values.
+	 * @param {number} col
+	 * @returns {number} last row index, or -1 if none found
+	 */
+	_getActiveLastRowForCol(col) {
+		let last = -1;
+		for (let r = this.sheet.numRows - 1; r >= 0; r--) {
+			if (this.sheet.hasValue(r, col)) {
+				last = r;
+				break;
+			}
+		}
+		if (last !== -1) return last;
+		let left = -1;
+		if (col - 1 >= 0) {
+			for (let r = this.sheet.numRows - 1; r >= 0; r--) {
+				if (this.sheet.hasValue(r, col - 1)) {
+					left = r;
+					break;
+				}
+			}
+		}
+		let right = -1;
+		if (col + 1 < this.sheet.numCols) {
+			for (let r = this.sheet.numRows - 1; r >= 0; r--) {
+				if (this.sheet.hasValue(r, col + 1)) {
+					right = r;
+					break;
+				}
+			}
+		}
+		return Math.max(left, right);
+	}
+
+	/**
+	 * Fallback mapping from visual index (1-based rank) to sheet row index
+	 * using the current rowMask. Avoids relying solely on Fenwick for edge cases.
+	 * @param {number} kOneBased
+	 * @returns {number}
+	 */
+	_findKthVisible(kOneBased) {
+		if (!this.rowMask) return -1;
+		let seen = 0;
+		for (let r = 0; r < this.sheet.numRows; r++) {
+			if (this.rowMask[r]) {
+				seen++;
+				if (seen === kOneBased) return r;
+			}
+		}
+		return -1;
+	}
+
 	setFilters(filters) {
 		this.filters = filters || [];
 		this._rebuildFilter();
@@ -42,7 +99,8 @@ export class SheetView {
 
 	setSort(sortSpec) {
 		this.sortSpec = sortSpec;
-		// this._rebuildSort(); // for later
+		// Always reassign values within active data range to keep filtering consistent
+		this._applySortAndReassignRows();
 		this.version++;
 	}
 
@@ -56,10 +114,18 @@ export class SheetView {
 	 * @returns {number}
 	 */
 	rowIdAt(visualIndex) {
+		if (Array.isArray(this.sortedRows) && this.sortedRows.length > 0) {
+			return (
+				this.sortedRows[Math.max(0, Math.min(visualIndex, this.sortedRows.length - 1))] ??
+				visualIndex
+			);
+		}
 		if (!this.rowMask || !this.fenwickTree) {
 			return visualIndex;
 		}
 		if (this.zeroMatch) return visualIndex;
+		const rByMask = this._findKthVisible(visualIndex + 1);
+		if (rByMask !== -1) return rByMask;
 		return this.fenwickTree.findKth(visualIndex + 1);
 	}
 
@@ -71,6 +137,12 @@ export class SheetView {
 	 */
 	rowIdAtForWrite(visualIndex) {
 		if (this.zeroMatch) return visualIndex;
+		if (Array.isArray(this.sortedRows) && this.sortedRows.length > 0) {
+			return (
+				this.sortedRows[Math.max(0, Math.min(visualIndex, this.sortedRows.length - 1))] ??
+				visualIndex
+			);
+		}
 		if (!this.rowMask || !this.fenwickTree) {
 			return visualIndex;
 		}
@@ -85,11 +157,20 @@ export class SheetView {
 	 */
 	getValue(visualRow, col) {
 		if (this.zeroMatch) return null;
+		if (Array.isArray(this.sortedRows) && this.sortedRows.length > 0) {
+			const rSorted = this.sortedRows[visualRow];
+			if (rSorted == null || rSorted === -1) return null;
+			return this.sheet.getValue(rSorted, col);
+		}
 		if (!this.rowMask || !this.fenwickTree) {
 			return this.sheet.getValue(visualRow, col);
 		}
-		const r = this.fenwickTree.findKth(visualRow + 1);
-		if (r === -1) return null;
+		let r = this._findKthVisible(visualRow + 1);
+		if (r === -1) r = this.fenwickTree.findKth(visualRow + 1);
+		if (r === -1) {
+			// Defensive fallback: if Fenwick cannot map, read by visual index to avoid blank cells
+			return this.sheet.getValue(visualRow, col);
+		}
 		return this.sheet.getValue(r, col);
 	}
 
@@ -110,6 +191,8 @@ export class SheetView {
 			this.rowMask = null;
 			this.fenwickTree = null;
 			this.visibleCount = this.sheet.numRows;
+			this.sortedRows = null; // reset; unsorted natural order
+			this.zeroMatch = false; // ensure values render when no filters
 			return;
 		}
 
@@ -226,5 +309,138 @@ export class SheetView {
 		this.visibleCount = visibleCount;
 	}
 
-	// _rebuildSort() { /* For later */ }
+	_rebuildSort() {
+		// If all rows are visible and no sort is specified, clear mapping
+		if (!this.sortSpec || !this.sortSpec.cols || this.sortSpec.cols.length === 0) {
+			this.sortedRows = null;
+			return;
+		}
+		const primary = this.sortSpec.cols[0];
+		if (!primary || typeof primary.c !== 'number') {
+			this.sortedRows = null;
+			return;
+		}
+		const colIndex = primary.c;
+		const dir = primary.dir === 'desc' ? 'desc' : 'asc';
+		const stable = this.sortSpec.stable !== false; // default to stable
+		/** @type {{row:number, key:any, tie:number}[]} */
+		const rows = [];
+		const useMask = Array.isArray(this.rowMask);
+		for (let r = 0; r < this.sheet.numRows; r++) {
+			if (useMask && !this.rowMask[r]) continue;
+			const v = this.sheet.getValue(r, colIndex);
+			rows.push({ row: r, key: v, tie: r });
+		}
+		const cmp = (a, b) => {
+			const va = a.key;
+			const vb = b.key;
+			// Null/empty always last
+			const aEmpty = va == null || va === '';
+			const bEmpty = vb == null || vb === '';
+			if (aEmpty && bEmpty) return stable ? a.tie - b.tie : 0;
+			if (aEmpty) return 1;
+			if (bEmpty) return -1;
+			// Numeric first if both are numbers
+			if (typeof va === 'number' && typeof vb === 'number') {
+				return va - vb;
+			}
+			// Try numeric compare if both are numeric strings
+			const na = typeof va === 'string' && va.trim() !== '' ? Number(va) : NaN;
+			const nb = typeof vb === 'string' && vb.trim() !== '' ? Number(vb) : NaN;
+			if (!Number.isNaN(na) && !Number.isNaN(nb)) {
+				return na - nb;
+			}
+			// Fallback case-insensitive string compare
+			const sa = String(va).toLowerCase();
+			const sb = String(vb).toLowerCase();
+			if (sa < sb) return -1;
+			if (sa > sb) return 1;
+			return stable ? a.tie - b.tie : 0;
+		};
+		rows.sort((a, b) => {
+			const base = cmp(a, b);
+			return dir === 'desc' ? -base : base;
+		});
+		this.sortedRows = rows.map((x) => x.row);
+		this.visibleCount = this.sortedRows.length;
+	}
+
+	/**
+	 * Applies current sortSpec to the underlying sheet by reassigning row values
+	 * for only the rows currently visible under the active filters.
+	 * This operation is executed as a single transaction for undo/redo.
+	 */
+	_applySortAndReassignRows() {
+		if (!this.sortSpec || !this.sortSpec.cols || this.sortSpec.cols.length === 0) {
+			return;
+		}
+		// Compile comparator using the same logic as _rebuildSort
+		const primary = this.sortSpec.cols[0];
+		if (!primary || typeof primary.c !== 'number') return;
+		const colIndex = primary.c;
+		const dir = primary.dir === 'desc' ? 'desc' : 'asc';
+		const stable = this.sortSpec.stable !== false; // default to stable
+		/** @type {{row:number, key:any, tie:number}[]} */
+		const visibleRows = [];
+		const useMask = Array.isArray(this.rowMask);
+		if (this.zeroMatch) return;
+		const activeLast = this._getActiveLastRowForCol(colIndex);
+		const maxRow = activeLast >= 0 ? activeLast : this.sheet.numRows - 1;
+		for (let r = 0; r <= maxRow; r++) {
+			if (useMask && !this.rowMask[r]) continue;
+			const v = this.sheet.getValue(r, colIndex);
+			visibleRows.push({ row: r, key: v, tie: r });
+		}
+		if (visibleRows.length <= 1) return;
+		const cmp = (a, b) => {
+			const va = a.key;
+			const vb = b.key;
+			const aEmpty = va == null || va === '';
+			const bEmpty = vb == null || vb === '';
+			if (aEmpty && bEmpty) return stable ? a.tie - b.tie : 0;
+			if (aEmpty) return 1;
+			if (bEmpty) return -1;
+			if (typeof va === 'number' && typeof vb === 'number') return va - vb;
+			const na = typeof va === 'string' && va.trim() !== '' ? Number(va) : NaN;
+			const nb = typeof vb === 'string' && vb.trim() !== '' ? Number(vb) : NaN;
+			if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
+			const sa = String(va).toLowerCase();
+			const sb = String(vb).toLowerCase();
+			if (sa < sb) return -1;
+			if (sa > sb) return 1;
+			return stable ? a.tie - b.tie : 0;
+		};
+		visibleRows.sort((a, b) => {
+			const base = cmp(a, b);
+			return dir === 'desc' ? -base : base;
+		});
+		// Targets are the original visible row indices in ascending order
+		/** @type {number[]} */
+		const targetRows = [];
+		for (let r = 0; r <= maxRow; r++) {
+			if (useMask && !this.rowMask[r]) continue;
+			targetRows.push(r);
+		}
+		// Snapshot all source rows after sort
+		const cols = this.sheet.numCols;
+		const snapshots = visibleRows.map(({ row }) => this.sheet.getBlock(row, 0, row, cols - 1)[0]);
+		// Apply in a single transaction
+		this.sheet.transact(() => {
+			// Clear destination in the active range only
+			for (let i = 0; i < targetRows.length; i++) {
+				const dest = targetRows[i];
+				this.sheet.deleteBlock(dest, 0, dest, this.sheet.numCols - 1);
+			}
+			// Then write snapshots in target order for as many visible rows as we have
+			for (let i = 0; i < snapshots.length && i < targetRows.length; i++) {
+				const dest = targetRows[i];
+				const rowValues = snapshots[i];
+				this.sheet.setBlock(dest, 0, [rowValues]);
+			}
+		});
+		// Rebuild filter structures since underlying data changed to keep mask correct
+		this._rebuildFilter();
+		// Clear any view-level sort mapping; data is now sorted in place
+		this.sortedRows = null;
+	}
 }

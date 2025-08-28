@@ -81,6 +81,16 @@ export const keymap = {
 		'Meta+Shift+z': { type: 'Redo' },
 		'Ctrl+y': { type: 'Redo' },
 		'Meta+y': { type: 'Redo' },
+		// Sorting shortcuts
+		'Ctrl+Alt+s': { type: 'ApplySort' },
+		'Meta+Alt+s': { type: 'ApplySort' },
+		'Ctrl+Alt+Shift+S': { type: 'RemoveSort' },
+		'Meta+Alt+Shift+S': { type: 'RemoveSort' },
+		// Filtering shortcuts
+		'Ctrl+Alt+f': { type: 'ApplyFilter' },
+		'Meta+Alt+f': { type: 'ApplyFilter' },
+		'Ctrl+Alt+Shift+F': { type: 'RemoveFilter' },
+		'Meta+Alt+Shift+F': { type: 'RemoveFilter' },
 		Delete: { type: 'DeleteSelection' },
 		Backspace: { type: 'DeleteSelection' }
 	},

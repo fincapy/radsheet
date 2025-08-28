@@ -188,6 +188,21 @@ export function createDragSelectionController({ getters, setters, methods, refs,
 				return;
 			}
 		}
+		// If near the sort icon area on the left side of the header cell, toggle sort
+		if (methods.toggleSortForColumn) {
+			const leftAbs = methods.getColLeft(col);
+			const leftLocal = leftAbs - getters.getScrollLeft();
+			if (x >= leftLocal + 4 && x <= leftLocal + 24) {
+				if (methods.isSortingEnabled && methods.isSortingEnabled()) {
+					methods.toggleSortForColumn(col);
+					return;
+				} else if (methods.toggleSortForColumn) {
+					// Even if sorting not globally enabled yet, clicking should enable with this column
+					methods.toggleSortForColumn(col);
+					return;
+				}
+			}
+		}
 		beginSelection('col', 0, col, e);
 	}
 	function onColHeadPointerMove(e) {
@@ -199,7 +214,7 @@ export function createDragSelectionController({ getters, setters, methods, refs,
 		if (!getters.getSelecting() && !resizing.active) {
 			const hit = methods.getColEdgeNearX ? methods.getColEdgeNearX(x, 5) : null;
 			methods.setHoverResizeCol(hit);
-			// Determine if hovering over filter icon area for the current column
+			// Determine if hovering over filter or sort icon areas for the current column
 			let cursor = 'default';
 			if (hit != null) {
 				cursor = 'col-resize';
@@ -213,6 +228,11 @@ export function createDragSelectionController({ getters, setters, methods, refs,
 					methods.isFilteringEnabled &&
 					methods.isFilteringEnabled()
 				) {
+					cursor = 'pointer';
+				}
+				const leftAbs = methods.getColLeft(col);
+				const leftLocal = leftAbs - getters.getScrollLeft();
+				if (x >= leftLocal + 4 && x <= leftLocal + 24 && methods.toggleSortForColumn) {
 					cursor = 'pointer';
 				}
 			}

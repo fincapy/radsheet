@@ -58,7 +58,10 @@ export function createRenderContext(env) {
 				isFiltered: env.isFiltered ? env.isFiltered() : false,
 				activeFilters: env.getActiveFilters ? env.getActiveFilters() : new Set(),
 				openFilterCol: env.getOpenFilterCol ? env.getOpenFilterCol() : null,
-				mapVisualRowToSheetRow: env.mapVisualRowToSheetRow
+				mapVisualRowToSheetRow: env.mapVisualRowToSheetRow,
+				// Pass through the getter so draw functions can query live state
+				getActiveSort: env.getActiveSort ? env.getActiveSort : null,
+				isSortingEnabled: env.isSortingEnabled ? env.isSortingEnabled() : false
 			};
 		}
 	};

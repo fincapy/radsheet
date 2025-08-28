@@ -105,6 +105,10 @@
 	let filterMode = $state('values'); // 'values' | 'condition'
 	let filterQuery = $state('');
 	let filterConditionByCol = $state(new Map()); // col -> {op, term}
+	// Sort UI state
+	let sortingEnabled = $state(false);
+	let sortCol = $state(null);
+	let sortDir = $state('asc'); // 'asc' | 'desc'
 	const addColumns = () => {
 		executeWithRerender(() => {
 			sheet.addColumns(26);
@@ -394,6 +398,41 @@
 		filteringEnabled = false;
 		scheduleRender();
 	}
+
+	function enableFilteringUi() {
+		filteringEnabled = true;
+		scheduleRender();
+	}
+
+	// Sorting helpers
+	function applySort(col, dir = 'asc') {
+		if (typeof col !== 'number') return;
+		sortCol = col;
+		sortDir = dir === 'desc' ? 'desc' : 'asc';
+		sortingEnabled = true;
+		// Always apply sort in-place within active data range so filtering continues to work
+		sheetView.setSort({ cols: [{ c: sortCol, dir: sortDir }], stable: true });
+		scheduleRender();
+	}
+	function toggleSortForColumn(col) {
+		if (!sortingEnabled || sortCol !== col) {
+			applySort(col, 'asc');
+			return;
+		}
+		const next = sortDir === 'asc' ? 'desc' : 'asc';
+		applySort(col, next);
+	}
+	function clearSort() {
+		sheetView.setSort(null);
+		sortingEnabled = false;
+		sortCol = null;
+		scheduleRender();
+	}
+
+	function enableSortingUi() {
+		sortingEnabled = true;
+		scheduleRender();
+	}
 	function onContextAction(type) {
 		closeContextMenu();
 		if (type === 'Undo') {
@@ -421,10 +460,14 @@
 			typeof type.col === 'number'
 		) {
 			// Enable filtering UI globally; do not open popover immediately
-			filteringEnabled = true;
-			scheduleRender();
+			enableFilteringUi();
 		} else if (type === 'RemoveFilter') {
 			clearAllFilters();
+		} else if (type === 'ApplySort') {
+			// Enable sorting UI globally; do not set a column here
+			enableSortingUi();
+		} else if (type === 'RemoveSort') {
+			clearSort();
 		}
 	}
 
@@ -857,7 +900,14 @@
 			deleteSelection,
 			canEdit: () => editable,
 			openFilterForColumn: (c) => openFilterForColumn(c),
-			isFilteringEnabled: () => filteringEnabled
+			isFilteringEnabled: () => filteringEnabled,
+			enableFilteringUi: () => enableFilteringUi(),
+			toggleSortForColumn: (c) => toggleSortForColumn(c),
+			isSortingEnabled: () => sortingEnabled,
+			enableSortingUi: () => enableSortingUi(),
+			clearSort: () => clearSort(),
+			clearAllFilters: () => clearAllFilters(),
+			getColLeft: (c) => colLeft(c)
 		},
 		refs: {
 			getGridCanvas: () => gridCanvas,
@@ -1039,7 +1089,10 @@
 			isFiltered: () => filteringEnabled,
 			getActiveFilters: () => activeFilterCols,
 			getOpenFilterCol: () => (filterOpen ? filterColumn : null),
-			mapVisualRowToSheetRow: (vr) => sheetView.rowIdAt(vr)
+			mapVisualRowToSheetRow: (vr) => sheetView.rowIdAt(vr),
+			getActiveSort: () =>
+				sortingEnabled && typeof sortCol === 'number' ? { col: sortCol, dir: sortDir } : null,
+			isSortingEnabled: () => sortingEnabled
 		});
 
 		// Ensure first paint happens after render context is ready
@@ -1338,25 +1391,84 @@
 				<span class="text-xs" style="color: var(--rs-popover-muted-text);">Ctrl+C</span>
 			</button>
 
+			<!-- Apply Sort -->
+			{#if !sortingEnabled}
+				<button
+					class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors"
+					style="color: var(--rs-popover-text);"
+					onclick={() => onContextAction('ApplySort')}
+				>
+					<div class="flex items-center gap-3">
+						<svg
+							class="h-4 w-4"
+							style="color: var(--rs-icon-muted);"
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M7 16l4-4 4 4M7 8l4-4 4 4"
+							/>
+						</svg>
+						<span>Apply Sort…</span>
+					</div>
+					<span class="text-xs" style="color: var(--rs-popover-muted-text);">Ctrl+Alt+S</span>
+				</button>
+			{/if}
+
+			<!-- Remove Sort -->
+			{#if sortingEnabled}
+				<button
+					class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors"
+					style="color: var(--rs-popover-text);"
+					onclick={() => onContextAction('RemoveSort')}
+				>
+					<div class="flex items-center gap-3">
+						<svg
+							class="h-4 w-4"
+							style="color: var(--rs-icon-muted);"
+							fill="none"
+							stroke="currentColor"
+							viewBox="0 0 24 24"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M6 18L18 6M6 6l12 12"
+							/>
+						</svg>
+						<span>Remove Sort</span>
+					</div>
+					<span class="text-xs" style="color: var(--rs-popover-muted-text);">Ctrl+Alt+Shift+S</span>
+				</button>
+			{/if}
+
 			<!-- Apply Filter -->
-			<button
-				class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors"
-				style="color: var(--rs-popover-text);"
-				onclick={() => onContextAction({ action: 'OpenFilter', col: lastActiveCol })}
-			>
-				<div class="flex items-center gap-3">
-					<svg
-						class="h-4 w-4"
-						style="color: var(--rs-icon-muted);"
-						fill="currentColor"
-						viewBox="0 0 16 16"
-						aria-hidden="true"
-					>
-						<path d="M2 3h12l-5 6v4l-2 1V9L2 3z" />
-					</svg>
-					<span>Apply Filter…</span>
-				</div>
-			</button>
+			{#if !filteringEnabled}
+				<button
+					class="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm transition-colors"
+					style="color: var(--rs-popover-text);"
+					onclick={() => onContextAction({ action: 'OpenFilter', col: lastActiveCol })}
+				>
+					<div class="flex items-center gap-3">
+						<svg
+							class="h-4 w-4"
+							style="color: var(--rs-icon-muted);"
+							fill="currentColor"
+							viewBox="0 0 16 16"
+							aria-hidden="true"
+						>
+							<path d="M2 3h12l-5 6v4l-2 1V9L2 3z" />
+						</svg>
+						<span>Apply Filter…</span>
+					</div>
+					<span class="text-xs" style="color: var(--rs-popover-muted-text);">Ctrl+Alt+F</span>
+				</button>
+			{/if}
 
 			<!-- Remove Filter -->
 			{#if filteringEnabled}
@@ -1382,6 +1494,7 @@
 						</svg>
 						<span>Remove Filter</span>
 					</div>
+					<span class="text-xs" style="color: var(--rs-popover-muted-text);">Ctrl+Alt+Shift+F</span>
 				</button>
 			{/if}
 

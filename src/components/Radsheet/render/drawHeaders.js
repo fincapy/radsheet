@@ -34,7 +34,9 @@ export function drawHeaders(opts) {
 		isFiltered,
 		activeFilters,
 		openFilterCol,
-		mapVisualRowToSheetRow
+		mapVisualRowToSheetRow,
+		getActiveSort,
+		isSortingEnabled
 	} = opts;
 
 	// Column headers
@@ -77,7 +79,20 @@ export function drawHeaders(opts) {
 			const w = getColWidth ? getColWidth(c) : CELL_WIDTH;
 			ctx.fillStyle = t?.header?.text || '#475569';
 			const label = columns[c] ?? String(c);
+			// Sort icon left of the label when sorting UI is enabled
+			const activeSort = typeof getActiveSort === 'function' ? getActiveSort() : null;
+			const sortingOn = !!isSortingEnabled;
+			// Draw label strictly centered regardless of sort icon
 			ctx.fillText(label, x + w / 2, COLUMN_HEADER_HEIGHT / 2);
+			// Draw sort icon to the left without shifting the label
+			if (sortingOn) {
+				const iconX = x + 9;
+				// Center a consistent 8px-tall icon vertically
+				const iconY = COLUMN_HEADER_HEIGHT / 2 - 4;
+				const isActive = !!(activeSort && activeSort.col === c);
+				const dir = isActive ? activeSort.dir : 'asc';
+				drawSortIcon(ctx, iconX, iconY, theme, dir, isActive);
+			}
 
 			// Draw filter icon if filtering UI is enabled
 			if (isFiltered) {
@@ -270,6 +285,43 @@ function drawFilterIcon(ctx, x, y, theme, isActive, isOpen) {
 		ctx.roundRect(x - 3, y - 2, 18, 14, 3);
 		ctx.stroke();
 		ctx.restore();
+	}
+	ctx.restore();
+}
+
+function drawSortIcon(ctx, x, y, theme, dir, isActive) {
+	ctx.save();
+	const activeColor = theme?.selection?.stroke || '#3b82f6';
+	const mutedColor = theme?.icon?.muted || '#94a3b8';
+	const color = isActive ? activeColor : mutedColor;
+	ctx.strokeStyle = color;
+	ctx.fillStyle = color;
+	ctx.lineWidth = 1.5;
+	// Draw up or down triangle arrow, 6x8 box with `y` as top
+	if (dir === 'desc') {
+		// Down arrow: base at top, tip at bottom
+		ctx.beginPath();
+		ctx.moveTo(x, y);
+		ctx.lineTo(x + 6, y);
+		ctx.lineTo(x + 3, y + 7);
+		ctx.closePath();
+		ctx.fill();
+	} else {
+		// Up arrow: base at bottom, tip at top
+		ctx.beginPath();
+		ctx.moveTo(x, y + 7);
+		ctx.lineTo(x + 6, y + 7);
+		ctx.lineTo(x + 3, y);
+		ctx.closePath();
+		ctx.fill();
+	}
+
+	// Active badge dot to mirror filter active affordance
+	if (isActive) {
+		ctx.beginPath();
+		ctx.arc(x + 8.5, y + 1.5, 2, 0, Math.PI * 2);
+		ctx.fillStyle = activeColor;
+		ctx.fill();
 	}
 	ctx.restore();
 }
