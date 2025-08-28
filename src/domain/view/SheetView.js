@@ -21,8 +21,8 @@ export class SheetView {
 		/** @type {number[] | null} */
 		this.sortedRows = null; // Array of sheet row indices in visual order (after filter + sort)
 
-		/** @type {boolean[] | null} */
-		this.rowMask = null; // A boolean array or bitset. True if the row is visible.
+		/** @type {Uint8Array | null} */
+		this.rowMask = null; // 1 if visible, 0 otherwise
 
 		/** @type {FenwickTree | null} */
 		this.fenwickTree = null;
@@ -80,14 +80,7 @@ export class SheetView {
 	 * @returns {number}
 	 */
 	_findKthVisible(kOneBased) {
-		if (!this.rowMask) return -1;
-		let seen = 0;
-		for (let r = 0; r < this.sheet.numRows; r++) {
-			if (this.rowMask[r]) {
-				seen++;
-				if (seen === kOneBased) return r;
-			}
-		}
+		// Deprecated linear fallback removed for performance; rely on Fenwick
 		return -1;
 	}
 
@@ -124,8 +117,6 @@ export class SheetView {
 			return visualIndex;
 		}
 		if (this.zeroMatch) return visualIndex;
-		const rByMask = this._findKthVisible(visualIndex + 1);
-		if (rByMask !== -1) return rByMask;
 		return this.fenwickTree.findKth(visualIndex + 1);
 	}
 
@@ -165,13 +156,8 @@ export class SheetView {
 		if (!this.rowMask || !this.fenwickTree) {
 			return this.sheet.getValue(visualRow, col);
 		}
-		let r = this._findKthVisible(visualRow + 1);
-		if (r === -1) r = this.fenwickTree.findKth(visualRow + 1);
-		if (r === -1) {
-			// Defensive fallback: if Fenwick cannot map, read by visual index to avoid blank cells
-			return this.sheet.getValue(visualRow, col);
-		}
-		return this.sheet.getValue(r, col);
+		const r = this.fenwickTree.findKth(visualRow + 1);
+		return r === -1 ? this.sheet.getValue(visualRow, col) : this.sheet.getValue(r, col);
 	}
 
 	/**
@@ -196,8 +182,10 @@ export class SheetView {
 			return;
 		}
 
-		this.rowMask = new Array(this.sheet.numRows).fill(true);
-		this.fenwickTree = new FenwickTree(this.sheet.numRows);
+		this.rowMask = new Uint8Array(this.sheet.numRows);
+		// initialize to visible, we'll compute precisely below
+		for (let i = 0; i < this.rowMask.length; i++) this.rowMask[i] = 1;
+		this.fenwickTree = null;
 
 		// Build per-column last active row, with adjacency fallback
 		/** @type {Map<number, number>} */
@@ -286,16 +274,13 @@ export class SheetView {
 					break;
 				}
 			}
-			this.rowMask[r] = isVisible;
+			this.rowMask[r] = isVisible ? 1 : 0;
 		}
 
 		let visibleCount = 0;
-		for (let r = 0; r < this.sheet.numRows; r++) {
-			if (this.rowMask[r]) {
-				visibleCount++;
-				this.fenwickTree.add(r + 1, 1);
-			}
-		}
+		for (let r = 0; r < this.sheet.numRows; r++) if (this.rowMask[r]) visibleCount++;
+		// Build fenwick in O(n) from mask
+		this.fenwickTree = new FenwickTree(this.sheet.numRows, this.rowMask);
 
 		if (visibleCount === 0) {
 			this.zeroMatch = true;
@@ -325,7 +310,7 @@ export class SheetView {
 		const stable = this.sortSpec.stable !== false; // default to stable
 		/** @type {{row:number, key:any, tie:number}[]} */
 		const rows = [];
-		const useMask = Array.isArray(this.rowMask);
+		const useMask = !!this.rowMask;
 		for (let r = 0; r < this.sheet.numRows; r++) {
 			if (useMask && !this.rowMask[r]) continue;
 			const v = this.sheet.getValue(r, colIndex);
@@ -382,7 +367,7 @@ export class SheetView {
 		const stable = this.sortSpec.stable !== false; // default to stable
 		/** @type {{row:number, key:any, tie:number}[]} */
 		const visibleRows = [];
-		const useMask = Array.isArray(this.rowMask);
+		const useMask = !!this.rowMask;
 		if (this.zeroMatch) return;
 		const activeLast = this._getActiveLastRowForCol(colIndex);
 		const maxRow = activeLast >= 0 ? activeLast : this.sheet.numRows - 1;

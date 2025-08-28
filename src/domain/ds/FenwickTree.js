@@ -5,10 +5,20 @@
 export class FenwickTree {
 	/**
 	 * @param {number} size The number of items in the tree (0-based).
+	 * @param {ArrayLike<number>=} initialValues Optional initial counts (length >= size) to build in O(n).
 	 */
-	constructor(size) {
+	constructor(size, initialValues) {
 		this.size = size;
-		this.tree = new Array(size + 1).fill(0);
+		// Use typed array for better memory use and perf
+		this.tree = new Int32Array(size + 1);
+		if (initialValues && initialValues.length >= size) {
+			for (let i = 1; i <= size; i++) this.tree[i] = initialValues[i - 1] | 0;
+			// O(n) BIT build
+			for (let i = 1; i <= size; i++) {
+				const j = i + (i & -i);
+				if (j <= size) this.tree[j] += this.tree[i];
+			}
+		}
 	}
 
 	/**
