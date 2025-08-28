@@ -98,6 +98,12 @@ export class SheetView {
 	}
 
 	visualRowCount() {
+		// If no filter/sort is active, the visual count is simply the total row count
+		// from the underlying sheet. This handles cases where rows are added to the sheet
+		// after the view is created. Otherwise, use the cached visibleCount.
+		if (!this.rowMask && !this.sortedRows) {
+			return this.sheet.numRows;
+		}
 		return this.visibleCount;
 	}
 
