@@ -25,6 +25,11 @@
 	let { theme: themeInput = 'light', data: dataInput, editable = false } = $props();
 	let resolvedTheme = $state(resolveTheme(themeInput));
 
+	// Helper to render compact Shift symbol in shortcut labels
+	function shiftSymbolKey(label) {
+		return `Ctrl+Alt+⇧+${label}`;
+	}
+
 	$effect(() => {
 		setData(dataInput);
 		console.log('sheet', sheet.numRows, sheet.numCols);
@@ -1443,7 +1448,9 @@
 						</svg>
 						<span>Remove Sort</span>
 					</div>
-					<span class="text-xs" style="color: var(--rs-popover-muted-text);">Ctrl+Alt+Shift+S</span>
+					<span class="text-xs" style="color: var(--rs-popover-muted-text);"
+						>{shiftSymbolKey('S')}</span
+					>
 				</button>
 			{/if}
 
@@ -1494,7 +1501,9 @@
 						</svg>
 						<span>Remove Filter</span>
 					</div>
-					<span class="text-xs" style="color: var(--rs-popover-muted-text);">Ctrl+Alt+Shift+F</span>
+					<span class="text-xs" style="color: var(--rs-popover-muted-text);"
+						>{shiftSymbolKey('F')}</span
+					>
 				</button>
 			{/if}
 
