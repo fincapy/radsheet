@@ -875,7 +875,7 @@
 			state: editorState,
 			readCell,
 			writeCell,
-			serializeRangeToTSV: (r1, c1, r2, c2) => sheet.serializeRangeToTSV(r1, c1, r2, c2),
+			serializeRangeToTSV: (r1, c1, r2, c2) => sheetView.serializeRangeToTSV(r1, c1, r2, c2),
 			deserializeTSV: (r, c, text) => sheet.deserializeTSV(r, c, text),
 			serializeRangeToTSVAsync
 		},

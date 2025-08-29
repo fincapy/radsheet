@@ -3,6 +3,7 @@
  * view over a core Sheet object without mutating the underlying data.
  */
 import { FenwickTree } from '../ds/FenwickTree.js';
+import { serialize2DToTSV } from '../clipboard/tsv.js';
 
 /**
  * A view on a Sheet that can be filtered and sorted without mutating the underlying data.
@@ -35,6 +36,23 @@ export class SheetView {
 
 		/** @type {number} */
 		this.lastDataRow = 0; // legacy global; may be superseded by per-column logic
+	}
+	/**
+	 * Serializes a rectangular visual range to TSV using the current view ordering.
+	 * @param {number} topVisualRow
+	 * @param {number} leftCol
+	 * @param {number} bottomVisualRow
+	 * @param {number} rightCol
+	 * @returns {string}
+	 */
+	serializeRangeToTSV(topVisualRow, leftCol, bottomVisualRow, rightCol) {
+		const values = [];
+		for (let vr = topVisualRow; vr <= bottomVisualRow; vr++) {
+			const row = [];
+			for (let c = leftCol; c <= rightCol; c++) row.push(this.getValue(vr, c));
+			values.push(row);
+		}
+		return serialize2DToTSV(values);
 	}
 
 	/**
@@ -87,13 +105,15 @@ export class SheetView {
 	setFilters(filters) {
 		this.filters = filters || [];
 		this._rebuildFilter();
+		// Keep sort mapping consistent with new filter results
+		this._rebuildSort();
 		this.version++;
 	}
 
 	setSort(sortSpec) {
 		this.sortSpec = sortSpec;
-		// Always reassign values within active data range to keep filtering consistent
-		this._applySortAndReassignRows();
+		// Build/refresh view-level sort mapping instead of mutating underlying data
+		this._rebuildSort();
 		this.version++;
 	}
 
@@ -190,7 +210,7 @@ export class SheetView {
 
 		this.rowMask = new Uint8Array(this.sheet.numRows);
 		// initialize to visible, we'll compute precisely below
-		for (let i = 0; i < this.rowMask.length; i++) this.rowMask[i] = 1;
+		this.rowMask.fill(1);
 		this.fenwickTree = null;
 
 		// Build per-column last active row, with adjacency fallback
@@ -242,8 +262,9 @@ export class SheetView {
 				compiled.push({
 					col,
 					evaluator: (v, row) => {
+						// Membership applies only within active data range; outside, it does not match.
 						const activeLast = getLastRowForCol(col);
-						if ((v == null || v === '') && activeLast !== -1 && row > activeLast) return true;
+						if (activeLast === -1 || row > activeLast) return false;
 						return set.has(v);
 					}
 				});
@@ -253,12 +274,14 @@ export class SheetView {
 				const term = termRaw.toLowerCase();
 				const evalCond = (v, row) => {
 					const activeLast = getLastRowForCol(col);
-					if (op === 'isBlank')
-						return v == null || v === '' || (activeLast !== -1 && row > activeLast);
-					if (op === 'isNotBlank') {
-						if (activeLast !== -1 && row > activeLast && (v == null || v === '')) return true;
-						return !(v == null || v === '');
+					// Only blank conditions are range-limited; others do not match out-of-range.
+					if (activeLast === -1 || row > activeLast) {
+						if (op === 'isBlank') return false; // out-of-range rows are not considered blank matches
+						if (op === 'isNotBlank') return true; // keep tail rows when filtering not-blank
+						return false; // other conditions don't match out-of-range
 					}
+					if (op === 'isBlank') return v == null || v === '';
+					if (op === 'isNotBlank') return !(v == null || v === '');
 					const s = String(v ?? '').toLowerCase();
 					if (op === 'contains') return s.includes(term);
 					if (op === 'equals') return s === term;
@@ -301,8 +324,13 @@ export class SheetView {
 	}
 
 	_rebuildSort() {
-		// If all rows are visible and no sort is specified, clear mapping
+		// If no sort specified, clear mapping
 		if (!this.sortSpec || !this.sortSpec.cols || this.sortSpec.cols.length === 0) {
+			this.sortedRows = null;
+			return;
+		}
+		// If filters yielded zero visible rows, skip building mapping
+		if (this.zeroMatch) {
 			this.sortedRows = null;
 			return;
 		}
@@ -314,45 +342,85 @@ export class SheetView {
 		const colIndex = primary.c;
 		const dir = primary.dir === 'desc' ? 'desc' : 'asc';
 		const stable = this.sortSpec.stable !== false; // default to stable
-		/** @type {{row:number, key:any, tie:number}[]} */
-		const rows = [];
 		const useMask = !!this.rowMask;
-		for (let r = 0; r < this.sheet.numRows; r++) {
-			if (useMask && !this.rowMask[r]) continue;
-			const v = this.sheet.getValue(r, colIndex);
-			rows.push({ row: r, key: v, tie: r });
+
+		// If a filter is active, sort ONLY visible rows across the entire sheet,
+		// and keep filtered-out rows out of the view mapping entirely.
+		// If no filter is active, limit to the active data range and append tail rows unchanged
+		// so empty trailing rows remain intact.
+		const activeLast = this._getActiveLastRowForCol(colIndex);
+		const maxRowNoFilter = activeLast >= 0 ? activeLast : this.sheet.numRows - 1;
+
+		// Build compact arrays: rows (row indices) and keys (sort keys)
+		/** @type {number[]} */
+		const rows = [];
+		/** @type {any[]} */
+		const keys = [];
+		/** @type {number[]} */
+		const tailVisible = [];
+		if (useMask && this.rowMask) {
+			// Only include visible rows within active range in the sortable set
+			for (let r = 0; r <= maxRowNoFilter; r++) {
+				if (!this.rowMask[r]) continue;
+				rows.push(r);
+				keys.push(this.sheet.getValue(r, colIndex));
+			}
+			// Preserve visible rows beyond the active range as tail
+			for (let r = maxRowNoFilter + 1; r < this.sheet.numRows; r++) {
+				if (!this.rowMask[r]) continue;
+				tailVisible.push(r);
+			}
+		} else {
+			for (let r = 0; r <= maxRowNoFilter; r++) {
+				rows.push(r);
+				keys.push(this.sheet.getValue(r, colIndex));
+			}
+			for (let r = maxRowNoFilter + 1; r < this.sheet.numRows; r++) tailVisible.push(r);
 		}
-		const cmp = (a, b) => {
-			const va = a.key;
-			const vb = b.key;
-			// Null/empty always last
+		const n = rows.length;
+		if (n === 1) {
+			this.sortedRows = rows;
+			this.visibleCount = rows.length;
+			return;
+		}
+
+		// Indices into rows/keys arrays for sorting to avoid moving large values repeatedly
+		/** @type {number[]} */
+		const idx = new Array(n);
+		for (let i = 0; i < n; i++) idx[i] = i;
+
+		const cmpIdx = (ia, ib) => {
+			const va = keys[ia];
+			const vb = keys[ib];
 			const aEmpty = va == null || va === '';
 			const bEmpty = vb == null || vb === '';
-			if (aEmpty && bEmpty) return stable ? a.tie - b.tie : 0;
-			if (aEmpty) return 1;
-			if (bEmpty) return -1;
-			// Numeric first if both are numbers
-			if (typeof va === 'number' && typeof vb === 'number') {
-				return va - vb;
+			// Empties: first in asc, last in desc
+			if (aEmpty && bEmpty) return stable ? rows[ia] - rows[ib] : 0;
+			if (aEmpty !== bEmpty) return dir === 'desc' ? (aEmpty ? 1 : -1) : aEmpty ? -1 : 1;
+
+			let base = 0;
+			if (typeof va === 'number' && typeof vb === 'number') base = va - vb;
+			else {
+				const na = typeof va === 'string' && va.trim() !== '' ? Number(va) : NaN;
+				const nb = typeof vb === 'string' && vb.trim() !== '' ? Number(vb) : NaN;
+				if (!Number.isNaN(na) && !Number.isNaN(nb)) base = na - nb;
+				else {
+					const sa = String(va).toLowerCase();
+					const sb = String(vb).toLowerCase();
+					if (sa < sb) base = -1;
+					else if (sa > sb) base = 1;
+					else base = 0;
+				}
 			}
-			// Try numeric compare if both are numeric strings
-			const na = typeof va === 'string' && va.trim() !== '' ? Number(va) : NaN;
-			const nb = typeof vb === 'string' && vb.trim() !== '' ? Number(vb) : NaN;
-			if (!Number.isNaN(na) && !Number.isNaN(nb)) {
-				return na - nb;
-			}
-			// Fallback case-insensitive string compare
-			const sa = String(va).toLowerCase();
-			const sb = String(vb).toLowerCase();
-			if (sa < sb) return -1;
-			if (sa > sb) return 1;
-			return stable ? a.tie - b.tie : 0;
-		};
-		rows.sort((a, b) => {
-			const base = cmp(a, b);
+			if (base === 0) return stable ? rows[ia] - rows[ib] : 0;
 			return dir === 'desc' ? -base : base;
-		});
-		this.sortedRows = rows.map((x) => x.row);
+		};
+		idx.sort(cmpIdx);
+
+		// Sorted portion is always the in-range set; append visible tail unchanged
+		const sortedInRange = new Array(n);
+		for (let i = 0; i < n; i++) sortedInRange[i] = rows[idx[i]];
+		this.sortedRows = n > 0 ? sortedInRange.concat(tailVisible) : tailVisible;
 		this.visibleCount = this.sortedRows.length;
 	}
 
@@ -375,6 +443,7 @@ export class SheetView {
 		const visibleRows = [];
 		const useMask = !!this.rowMask;
 		if (this.zeroMatch) return;
+		// Limit to active range for in-place rewrite so we don't affect tail empty rows
 		const activeLast = this._getActiveLastRowForCol(colIndex);
 		const maxRow = activeLast >= 0 ? activeLast : this.sheet.numRows - 1;
 		for (let r = 0; r <= maxRow; r++) {
@@ -388,23 +457,28 @@ export class SheetView {
 			const vb = b.key;
 			const aEmpty = va == null || va === '';
 			const bEmpty = vb == null || vb === '';
+			// Empties: first in asc, last in desc
 			if (aEmpty && bEmpty) return stable ? a.tie - b.tie : 0;
-			if (aEmpty) return 1;
-			if (bEmpty) return -1;
-			if (typeof va === 'number' && typeof vb === 'number') return va - vb;
-			const na = typeof va === 'string' && va.trim() !== '' ? Number(va) : NaN;
-			const nb = typeof vb === 'string' && vb.trim() !== '' ? Number(vb) : NaN;
-			if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
-			const sa = String(va).toLowerCase();
-			const sb = String(vb).toLowerCase();
-			if (sa < sb) return -1;
-			if (sa > sb) return 1;
-			return stable ? a.tie - b.tie : 0;
-		};
-		visibleRows.sort((a, b) => {
-			const base = cmp(a, b);
+			if (aEmpty !== bEmpty) return dir === 'desc' ? (aEmpty ? 1 : -1) : aEmpty ? -1 : 1;
+
+			let base = 0;
+			if (typeof va === 'number' && typeof vb === 'number') base = va - vb;
+			else {
+				const na = typeof va === 'string' && va.trim() !== '' ? Number(va) : NaN;
+				const nb = typeof vb === 'string' && vb.trim() !== '' ? Number(vb) : NaN;
+				if (!Number.isNaN(na) && !Number.isNaN(nb)) base = na - nb;
+				else {
+					const sa = String(va).toLowerCase();
+					const sb = String(vb).toLowerCase();
+					if (sa < sb) base = -1;
+					else if (sa > sb) base = 1;
+					else base = 0;
+				}
+			}
+			if (base === 0) return stable ? a.tie - b.tie : 0;
 			return dir === 'desc' ? -base : base;
-		});
+		};
+		visibleRows.sort(cmp);
 		// Targets are the original visible row indices in ascending order
 		/** @type {number[]} */
 		const targetRows = [];
